@@ -34,18 +34,24 @@ async function initializeServices() {
     logger.info('Initializing services...');
     
     if (!useExternalWechaty) {
+      // Only load wechatyService if not using external
       const getWechatyService = require('./services/wechatyService');
       wechatyService = getWechatyService();
       await wechatyService.initialize();
       logger.info('Internal Wechaty service initialized');
     } else {
-      logger.info('USE_EXTERNAL_WECHATY=true — skipping internal Wechaty startup');
+      logger.info('USE_EXTERNAL_WECHATY=true — skipping internal Wechaty startup (using external service)');
     }
 
     logger.info('Services initialized successfully');
   } catch (error) {
     logger.error('Failed to initialize services', error);
-    process.exit(1);
+    // Don't exit if using external Wechaty and error is about missing Wechaty
+    if (useExternalWechaty && error.message && error.message.includes('Wechaty is required')) {
+      logger.warn('Wechaty not installed, but using external service - continuing...');
+    } else {
+      process.exit(1);
+    }
   }
 }
 

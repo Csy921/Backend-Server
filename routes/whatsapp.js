@@ -6,9 +6,14 @@ const { logger, logWhatsAppMessage } = require('../services/logger');
 const getRoutingController = require('../controllers/routingController');
 const getSessionController = require('../controllers/sessionController');
 // Choose one: Use adapter for external service OR built-in service
-const getWechatyService = process.env.USE_EXTERNAL_WECHATY === 'true' 
-  ? require('../services/wechatyAdapter')
-  : require('../services/wechatyService');
+// Use lazy loading to avoid loading wechatyService when using external
+function getWechatyService() {
+  if (process.env.USE_EXTERNAL_WECHATY === 'true') {
+    return require('../services/wechatyAdapter');
+  } else {
+    return require('../services/wechatyService');
+  }
+}
 const getWhatsAppAdapter = require('../services/whatsappAdapter');
 const { v4: uuidv4 } = require('uuid');
 

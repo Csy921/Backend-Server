@@ -1,12 +1,12 @@
 // Conditionally load Wechaty - only if not using external service
 let Wechaty = null;
-try {
-  if (process.env.USE_EXTERNAL_WECHATY !== 'true') {
+const useExternalWechaty = process.env.USE_EXTERNAL_WECHATY === 'true';
+
+if (!useExternalWechaty) {
+  try {
     Wechaty = require('wechaty').Wechaty;
-  }
-} catch (error) {
-  // Wechaty not available - this is OK if using external service
-  if (process.env.USE_EXTERNAL_WECHATY !== 'true') {
+  } catch (error) {
+    // Only throw if we're actually trying to use the built-in service
     throw new Error('Wechaty is required but not installed. Install with: npm install wechaty wechaty-puppet-wechat');
   }
 }
