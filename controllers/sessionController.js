@@ -30,7 +30,18 @@ class SessionController {
   constructor() {
     this.sessions = new Map(); // sessionId -> session data
     this.groupToSessionMap = new Map(); // groupId -> sessionId
-    this.wechatyService = getWechatyService();
+    // Lazy load wechatyService - only when actually needed
+    this._wechatyService = null;
+  }
+
+  /**
+   * Get wechatyService (lazy loaded)
+   */
+  get wechatyService() {
+    if (!this._wechatyService) {
+      this._wechatyService = getWechatyService();
+    }
+    return this._wechatyService;
     // LLM service is optional - only initialize if configured
     try {
       this.llmService = getLLMService();

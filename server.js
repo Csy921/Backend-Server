@@ -1,9 +1,16 @@
+// Load environment variables first
+require('dotenv').config();
+
 const express = require('express');
 const whatsappConfig = require('./config/whatsappConfig');
 const { logger } = require('./services/logger');
+
+// Check environment variable early and log it
+const useExternalWechaty = process.env.USE_EXTERNAL_WECHATY === 'true';
+logger.info(`USE_EXTERNAL_WECHATY=${process.env.USE_EXTERNAL_WECHATY || 'not set'} (resolved to: ${useExternalWechaty})`);
+
 const whatsappRoutes = require('./routes/whatsapp');
 const wechatRoutes = require('./routes/wechat');
-const useExternalWechaty = process.env.USE_EXTERNAL_WECHATY === 'true';
 
 const app = express();
 
@@ -33,12 +40,22 @@ async function initializeServices() {
   try {
     logger.info('Initializing services...');
     
+    // Log the environment variable value for debugging
+    logger.info(`USE_EXTERNAL_WECHATY=${process.env.USE_EXTERNAL_WECHATY || 'not set'}`);
+    
     if (!useExternalWechaty) {
       // Only load wechatyService if not using external
-      const getWechatyService = require('./services/wechatyService');
-      wechatyService = getWechatyService();
-      await wechatyService.initialize();
-      logger.info('Internal Wechaty service initialized');
+      try {
+        const getWechatyService = require('./services/wechatyService');
+        wechatyService = getWechatyService();
+        await wechatyService.initialize();
+        logger.info('Internal Wechaty service initialized');
+      } catch (error) {
+        if (error.message && error.message.includes('Wechaty is required')) {
+          throw new Error('Wechaty is required for built-in bot. Either install Wechaty or set USE_EXTERNAL_WECHATY=true');
+        }
+        throw error;
+      }
     } else {
       logger.info('USE_EXTERNAL_WECHATY=true — skipping internal Wechaty startup (using external service)');
     }
@@ -46,12 +63,7 @@ async function initializeServices() {
     logger.info('Services initialized successfully');
   } catch (error) {
     logger.error('Failed to initialize services', error);
-    // Don't exit if using external Wechaty and error is about missing Wechaty
-    if (useExternalWechaty && error.message && error.message.includes('Wechaty is required')) {
-      logger.warn('Wechaty not installed, but using external service - continuing...');
-    } else {
-      process.exit(1);
-    }
+    process.exit(1);
   }
 }
 

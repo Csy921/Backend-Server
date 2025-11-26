@@ -2,12 +2,16 @@
 let Wechaty = null;
 const useExternalWechaty = process.env.USE_EXTERNAL_WECHATY === 'true';
 
+// Only try to load Wechaty if we're actually going to use it
+// This prevents errors when the module is loaded but Wechaty isn't installed
 if (!useExternalWechaty) {
   try {
+    // Try to load Wechaty - if it fails, we'll handle it in initialize()
     Wechaty = require('wechaty').Wechaty;
   } catch (error) {
-    // Only throw if we're actually trying to use the built-in service
-    throw new Error('Wechaty is required but not installed. Install with: npm install wechaty wechaty-puppet-wechat');
+    // Don't throw here - let initialize() handle it
+    // This allows the module to be loaded even if Wechaty isn't installed
+    Wechaty = null;
   }
 }
 
@@ -27,7 +31,16 @@ class WechatyService {
   async initialize() {
     try {
       if (!Wechaty) {
-        throw new Error('Wechaty is not available. This service should not be used when USE_EXTERNAL_WECHATY=true');
+        // Try to load it one more time in case it wasn't available at module load
+        if (!useExternalWechaty) {
+          try {
+            Wechaty = require('wechaty').Wechaty;
+          } catch (error) {
+            throw new Error('Wechaty is required but not installed. Install with: npm install wechaty wechaty-puppet-wechat');
+          }
+        } else {
+          throw new Error('Wechaty is not available. This service should not be used when USE_EXTERNAL_WECHATY=true');
+        }
       }
       
       this.bot = new Wechaty({
