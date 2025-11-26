@@ -1,12 +1,9 @@
 const express = require('express');
 const whatsappConfig = require('./config/whatsappConfig');
 const { logger } = require('./services/logger');
-// Choose one: Use adapter for external service OR built-in service
-const getWechatyService = process.env.USE_EXTERNAL_WECHATY === 'true'
-  ? require('./services/wechatyAdapter')
-  : require('./services/wechatyService');
 const whatsappRoutes = require('./routes/whatsapp');
 const wechatRoutes = require('./routes/wechat');
+const useExternalWechaty = process.env.USE_EXTERNAL_WECHATY === 'true';
 
 const app = express();
 
@@ -29,14 +26,22 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// Initialize Wechaty service
+// Initialize Wechaty service (only when running the built-in bot)
 let wechatyService = null;
 
 async function initializeServices() {
   try {
     logger.info('Initializing services...');
-    wechatyService = getWechatyService();
-    await wechatyService.initialize();
+    
+    if (!useExternalWechaty) {
+      const getWechatyService = require('./services/wechatyService');
+      wechatyService = getWechatyService();
+      await wechatyService.initialize();
+      logger.info('Internal Wechaty service initialized');
+    } else {
+      logger.info('USE_EXTERNAL_WECHATY=true — skipping internal Wechaty startup');
+    }
+
     logger.info('Services initialized successfully');
   } catch (error) {
     logger.error('Failed to initialize services', error);
