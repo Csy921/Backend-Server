@@ -1,0 +1,48 @@
+{
+  "categories": {
+    "basin": {
+      "suppliers": [
+        {
+          "groupId": "supplier_basin_group_1",
+          "name": "Big Bath Supplier Group",
+          "wechatGroupId": "27551115736@chatroom"
+        },
+        {
+          "groupId": "supplier_basin_group_2",
+          "name": "Basin Supplier B",
+          "wechatGroupId": "wxid_basin_supplier_b"
+        },
+        {
+          "groupId": "supplier_basin_group_3",
+          "name": "Basin Supplier C",
+          "wechatGroupId": "wxid_basin_supplier_c"
+        }
+      ]
+    },
+    "faucet": {
+      "suppliers": [
+        {
+          "groupId": "supplier_faucet_group_1",
+          "name": "Faucet Supplier A",
+          "wechatGroupId": "wxid_faucet_supplier_a"
+        },
+        {
+          "groupId": "supplier_faucet_group_2",
+          "name": "Faucet Supplier B",
+          "wechatGroupId": "wxid_faucet_supplier_b"
+        }
+      ]
+    },
+    "toilet": {
+      "suppliers": [
+        {
+          "groupId": "supplier_toilet_group_1",
+          "name": "Toilet Supplier A",
+          "wechatGroupId": "wxid_toilet_supplier_a"
+        }
+      ]
+    }
+  },
+  "defaultCategory": "general"
+}
+
