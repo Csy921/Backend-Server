@@ -1,7 +1,16 @@
 const { createTimer, hasExceededTime } = require('../utils/timer');
 const wechatyConfig = require('../config/wechatyConfig');
 const { logger, logSessionCreated, logSessionCompleted, logSessionTimeout, getRepliesFromLogs } = require('../services/logger');
-const getWechatyService = require('../services/wechatyService');
+
+// Conditionally load Wechaty service based on USE_EXTERNAL_WECHATY
+function getWechatyService() {
+  if (process.env.USE_EXTERNAL_WECHATY === 'true') {
+    return require('../services/wechatyAdapter');
+  } else {
+    return require('../services/wechatyService');
+  }
+}
+
 // LLM service is optional - only load if configured
 function getLLMService() {
   try {

@@ -73,10 +73,11 @@ async function startServer() {
   await initializeServices();
   
   app.listen(PORT, () => {
+    const baseUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
     logger.info(`Server running on port ${PORT}`);
-    logger.info(`WhatsApp webhook endpoint: http://localhost:${PORT}/webhook/whatsapp/webhook`);
-    logger.info(`WeChat webhook endpoint: http://localhost:${PORT}/webhook/wechat/webhook`);
-    logger.info(`Health check: http://localhost:${PORT}/health`);
+    logger.info(`WhatsApp webhook endpoint: ${baseUrl}/webhook/whatsapp/webhook`);
+    logger.info(`WeChat webhook endpoint: ${baseUrl}/webhook/wechat/webhook`);
+    logger.info(`Health check: ${baseUrl}/health`);
   });
 }
 

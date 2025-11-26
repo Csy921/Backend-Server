@@ -1,4 +1,16 @@
-const { Wechaty } = require('wechaty');
+// Conditionally load Wechaty - only if not using external service
+let Wechaty = null;
+try {
+  if (process.env.USE_EXTERNAL_WECHATY !== 'true') {
+    Wechaty = require('wechaty').Wechaty;
+  }
+} catch (error) {
+  // Wechaty not available - this is OK if using external service
+  if (process.env.USE_EXTERNAL_WECHATY !== 'true') {
+    throw new Error('Wechaty is required but not installed. Install with: npm install wechaty wechaty-puppet-wechat');
+  }
+}
+
 const wechatyConfig = require('../config/wechatyConfig');
 const { logger, logWeChatReply } = require('./logger');
 
@@ -14,6 +26,10 @@ class WechatyService {
    */
   async initialize() {
     try {
+      if (!Wechaty) {
+        throw new Error('Wechaty is not available. This service should not be used when USE_EXTERNAL_WECHATY=true');
+      }
+      
       this.bot = new Wechaty({
         name: wechatyConfig.name,
         puppet: wechatyConfig.puppet,
