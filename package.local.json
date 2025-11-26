@@ -1,0 +1,10 @@
+{
+  "name": "whatsapp-wechat-automation-backend",
+  "version": "1.0.0",
+  "description": "Local development package.json with Wechaty (for testing built-in bot)",
+  "dependencies": {
+    "wechaty": "^1.20.2",
+    "wechaty-puppet-wechat": "^1.18.4"
+  }
+}
+
