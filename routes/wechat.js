@@ -78,16 +78,6 @@ async function forwardMessageToWhatsAppGroup(message) {
     }
 
     const whatsappAdapter = getWhatsAppAdapter();
-    const sender = message?.sender || {};
-    const chat = message?.chat || {};
-    const senderName = sender.name || message.from || sender.id || 'Unknown Sender';
-    const chatLabel =
-      chat.groupName ||
-      chat.topic ||
-      message.groupName ||
-      message.roomName ||
-      (chat.isGroup ? 'WeChat Group' : 'Direct Chat');
-
     const textContent =
       message.message ||
       message.text ||
@@ -95,22 +85,16 @@ async function forwardMessageToWhatsAppGroup(message) {
       message.payload ||
       (typeof message === 'string' ? message : JSON.stringify(message));
 
-    const formattedMessage = `[WeChat → WhatsApp]\nFrom: ${senderName}\nChat: ${chatLabel}\nTime: ${
-      message.timestamp || new Date().toISOString()
-    }\n\n${textContent}`;
-
-    logger.info('Forwarding WeChat message to WhatsApp group', {
+    logger.info('Forwarding WeChat message content to WhatsApp group', {
       groupId: salesGroupId,
-      sender: senderName,
-      chat: chatLabel,
+      preview: textContent.slice(0, 120),
     });
 
-    const sent = await whatsappAdapter.sendToGroup(salesGroupId, formattedMessage);
+    const sent = await whatsappAdapter.sendToGroup(salesGroupId, textContent);
 
     if (!sent) {
       logger.error('Failed to forward WeChat message to WhatsApp group', {
         groupId: salesGroupId,
-        sender: senderName,
       });
     }
   } catch (error) {
