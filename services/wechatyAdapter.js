@@ -205,12 +205,23 @@ class WechatyAdapter {
       const sessionId = this.getSessionFromGroup(groupId);
       if (!sessionId) {
         // Log that message was received but not part of active session
-        logger.debug('WeChat message received but not part of active session', {
+        logger.warn('WeChat message received but not part of active session', {
           groupId,
           from: message.sender?.name || message.from,
+          messageText: text.substring(0, 100),
+          availableSessions: Array.from(this.groupToSessionMap.entries()).map(([gid, sid]) => ({
+            groupId: gid,
+            sessionId: sid
+          })),
         });
         return; // Not related to any active session
       }
+      
+      logger.info('WeChat message matched to session', {
+        sessionId,
+        groupId,
+        from: message.sender?.name || message.from,
+      });
 
       // Extract sender name
       const sender = message.sender || {};

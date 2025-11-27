@@ -7,6 +7,8 @@ const express = require('express');
 const router = express.Router();
 const { logger } = require('../services/logger');
 const getWechatyAdapter = require('../services/wechatyAdapter');
+const getWhatsAppAdapter = require('../services/whatsappAdapter');
+const whatsappConfig = require('../config/whatsappConfig');
 
 /**
  * Webhook endpoint for receiving WeChat messages from external service
@@ -29,6 +31,9 @@ router.post('/webhook', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
 
+    // Forward every incoming WeChat message to WhatsApp group (no filters)
+    await forwardMessageToWhatsAppGroup(message);
+
     // Validate message format
     // Support both formats:
     // 1. New format: { chat: { groupId, isGroup }, sender: { name }, message, timestamp }
@@ -45,14 +50,6 @@ router.post('/webhook', async (req, res) => {
       return;
     }
     
-    // Only process group messages
-    if (chat.isGroup === false) {
-      logger.debug('Ignoring private message (not a group message)', {
-        sender: message.sender?.name || message.from,
-      });
-      return;
-    }
-
     // Handle the message via adapter
     const wechatyAdapter = getWechatyAdapter();
     await wechatyAdapter.handleMessage(message);
@@ -67,6 +64,59 @@ router.post('/webhook', async (req, res) => {
 router.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'wechat-webhook' });
 });
+
+/**
+ * Forward all incoming WeChat messages to the configured WhatsApp group
+ * @param {Object} message - Raw message payload from Wechaty service
+ */
+async function forwardMessageToWhatsAppGroup(message) {
+  try {
+    const salesGroupId = whatsappConfig.salesGroupId;
+    if (!salesGroupId) {
+      logger.warn('SALES_GROUP_ID not configured, cannot forward WeChat message to WhatsApp group');
+      return;
+    }
+
+    const whatsappAdapter = getWhatsAppAdapter();
+    const sender = message?.sender || {};
+    const chat = message?.chat || {};
+    const senderName = sender.name || message.from || sender.id || 'Unknown Sender';
+    const chatLabel =
+      chat.groupName ||
+      chat.topic ||
+      message.groupName ||
+      message.roomName ||
+      (chat.isGroup ? 'WeChat Group' : 'Direct Chat');
+
+    const textContent =
+      message.message ||
+      message.text ||
+      message.content ||
+      message.payload ||
+      (typeof message === 'string' ? message : JSON.stringify(message));
+
+    const formattedMessage = `[WeChat → WhatsApp]\nFrom: ${senderName}\nChat: ${chatLabel}\nTime: ${
+      message.timestamp || new Date().toISOString()
+    }\n\n${textContent}`;
+
+    logger.info('Forwarding WeChat message to WhatsApp group', {
+      groupId: salesGroupId,
+      sender: senderName,
+      chat: chatLabel,
+    });
+
+    const sent = await whatsappAdapter.sendToGroup(salesGroupId, formattedMessage);
+
+    if (!sent) {
+      logger.error('Failed to forward WeChat message to WhatsApp group', {
+        groupId: salesGroupId,
+        sender: senderName,
+      });
+    }
+  } catch (error) {
+    logger.error('Error forwarding WeChat message to WhatsApp group', error);
+  }
+}
 
 module.exports = router;
 
