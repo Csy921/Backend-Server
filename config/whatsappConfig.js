@@ -9,6 +9,6 @@ module.exports = {
   phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
   accessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
   // Group settings
-  salesGroupId: process.env.SALES_GROUP_ID || '120363423448507443@g.us',
+  salesGroupId: process.env.SALES_GROUP_ID || '120363403868036748@g.us',
 };
 
