@@ -18,21 +18,25 @@ class WhatsAppAdapter {
 
   /**
    * Send message to WhatsApp
-   * Modify this method to match your WhatsApp service API
+   * Supports both WhatsApp Business API and custom WhatsApp service (wsmanager)
+   * 
    * @param {string} recipient - WhatsApp recipient ID (phone number or group ID)
+   *   - Individual: Phone number with country code (e.g., "60123456789")
+   *   - Group: Group ID (e.g., "120363123456789012@g.us")
    * @param {string} messageText - Message text to send
    * @param {string} sessionId - Optional session ID for tracking
+   * @param {Object} variables - Optional variables for message templating
    * @returns {Promise<boolean>} Success status
    */
-  async sendMessage(recipient, messageText, sessionId = null) {
+  async sendMessage(recipient, messageText, sessionId = null, variables = null) {
     try {
       // Option 1: If using WhatsApp Business API directly
       if (this.config.phoneNumberId && this.config.accessToken) {
         return await this.sendViaBusinessAPI(recipient, messageText);
       }
 
-      // Option 2: If using your own WhatsApp service
-      return await this.sendViaCustomService(recipient, messageText, sessionId);
+      // Option 2: If using your own WhatsApp service (wsmanager)
+      return await this.sendViaCustomService(recipient, messageText, sessionId, variables);
     } catch (error) {
       logger.error('Error sending WhatsApp message', error);
       return false;
@@ -80,25 +84,44 @@ class WhatsAppAdapter {
 
   /**
    * Send via your custom WhatsApp service
-   * Modify this to match your service's API
-   * @param {string} recipient - Recipient ID
+   * API: POST /api/whatsapp/send-message
+   * 
+   * Request Body:
+   * {
+   *   "to": "60123456789" or "120363123456789012@g.us",
+   *   "message": "Hello {name}, welcome!",
+   *   "variables": { "name": "John" } // optional
+   * }
+   * 
+   * Response:
+   * {
+   *   "success": true,
+   *   "messageId": "3EB0123456789ABCDEF",
+   *   "to": "60123456789@s.whatsapp.net"
+   * }
+   * 
+   * @param {string} recipient - Recipient ID (phone number or group ID)
    * @param {string} messageText - Message text
-   * @param {string} sessionId - Session ID
+   * @param {string} sessionId - Session ID (for tracking)
+   * @param {Object} variables - Optional variables for message templating
    * @returns {Promise<boolean>} Success status
    */
-  async sendViaCustomService(recipient, messageText, sessionId = null) {
+  async sendViaCustomService(recipient, messageText, sessionId = null, variables = null) {
     try {
-      // Send message via WhatsApp service endpoint
-      // Endpoint: /api/whatsapp/send-message
-      // Format: { to, message, variables (optional) }
+      // Prepare request body according to API spec
+      const requestBody = {
+        to: recipient,
+        message: messageText,
+      };
+
+      // Add variables if provided
+      if (variables && typeof variables === 'object') {
+        requestBody.variables = variables;
+      }
+
       const response = await axios.post(
         `${this.baseUrl}/api/whatsapp/send-message`,
-        {
-          to: recipient,
-          message: messageText,
-          // Optional: variables for message templating
-          // variables: { name: "John" }
-        },
+        requestBody,
         {
           headers: {
             'Authorization': `Bearer ${this.apiKey}`,
@@ -107,17 +130,36 @@ class WhatsAppAdapter {
         }
       );
 
-      logger.info('WhatsApp message sent via custom service', {
-        recipient,
-        sessionId,
-        status: response.status,
-      });
+      // Check response format according to API spec
+      const responseData = response.data || {};
+      const isSuccess = response.status === 200 || response.status === 201;
+      const apiSuccess = responseData.success === true;
 
-      return response.status === 200 || response.status === 201;
+      if (isSuccess && apiSuccess) {
+        logger.info('WhatsApp message sent via custom service', {
+          recipient,
+          sessionId,
+          messageId: responseData.messageId,
+          to: responseData.to,
+          status: response.status,
+        });
+        return true;
+      } else {
+        logger.warn('WhatsApp API returned unsuccessful response', {
+          recipient,
+          sessionId,
+          status: response.status,
+          responseData,
+        });
+        return false;
+      }
     } catch (error) {
       logger.error('Error sending via custom WhatsApp service', {
         error: error.message,
+        recipient,
+        sessionId,
         baseUrl: this.baseUrl,
+        response: error.response?.data,
       });
       return false;
     }
@@ -125,13 +167,14 @@ class WhatsAppAdapter {
 
   /**
    * Send message to a WhatsApp group
-   * @param {string} groupId - WhatsApp group ID
+   * @param {string} groupId - WhatsApp group ID (e.g., "120363123456789012@g.us")
    * @param {string} messageText - Message text
    * @param {string} sessionId - Optional session ID
+   * @param {Object} variables - Optional variables for message templating
    * @returns {Promise<boolean>} Success status
    */
-  async sendToGroup(groupId, messageText, sessionId = null) {
-    return await this.sendMessage(groupId, messageText, sessionId);
+  async sendToGroup(groupId, messageText, sessionId = null, variables = null) {
+    return await this.sendMessage(groupId, messageText, sessionId, variables);
   }
 
   /**

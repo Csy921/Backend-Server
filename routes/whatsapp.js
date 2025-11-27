@@ -130,10 +130,26 @@ async function processWhatsAppMessage(message) {
     // Wait for replies (with timeout handled by session controller)
     const result = await waitForSessionCompletion(sessionId, sessionController);
 
-    // Send summary back to WhatsApp
+    // Send summary back to WhatsApp group
     if (result) {
       const whatsappAdapter = getWhatsAppAdapter();
-      await whatsappAdapter.sendMessage(message.from, result.summary, sessionId);
+      const salesGroupId = whatsappConfig.salesGroupId;
+      
+      if (salesGroupId) {
+        // Format the summary message with session info
+        const summaryMessage = `[Session: ${sessionId}]\n\n${result.summary}`;
+        await whatsappAdapter.sendToGroup(salesGroupId, summaryMessage, sessionId);
+        
+        logger.info('Summary sent to WhatsApp sales group', {
+          sessionId,
+          groupId: salesGroupId,
+          replyCount: result.replyCount,
+        });
+      } else {
+        logger.warn('SALES_GROUP_ID not configured, cannot send summary to WhatsApp group', {
+          sessionId,
+        });
+      }
     }
   } catch (error) {
     logger.error('Error processing WhatsApp message', error);
