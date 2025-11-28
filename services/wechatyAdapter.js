@@ -18,6 +18,7 @@ class WechatyAdapter {
     this.messageHandlers = new Map(); // sessionId -> handler function
     this.groupToSessionMap = new Map(); // groupId -> sessionId
     this.pollingInterval = null;
+    this.pollingErrorLogged = false; // Track if we've logged polling errors to avoid spam
   }
 
   /**
@@ -35,6 +36,9 @@ class WechatyAdapter {
         apiKeyLength: this.apiKey ? this.apiKey.length : 0,
       });
 
+      // Test connection first
+      await this.testConnection();
+
       // Option 1: Register webhook with your Wechaty service
       await this.registerWebhook();
 
@@ -49,6 +53,51 @@ class WechatyAdapter {
     } catch (error) {
       logger.error('Failed to initialize Wechaty adapter', error);
       throw error;
+    }
+  }
+
+  /**
+   * Test connection to Wechaty service
+   */
+  async testConnection() {
+    try {
+      // Try to reach the health endpoint or root
+      const testUrls = [
+        `${this.baseUrl}/health`,
+        `${this.baseUrl}/`,
+        `${this.baseUrl}/api/send`, // Try the actual endpoint (will fail but confirms service is reachable)
+      ];
+
+      for (const url of testUrls) {
+        try {
+          const response = await axios.get(url, {
+            timeout: 5000,
+            validateStatus: () => true, // Accept any status code
+          });
+          
+          logger.info('Wechaty service connection test successful', {
+            url,
+            status: response.status,
+          });
+          return true;
+        } catch (error) {
+          // Try next URL
+          continue;
+        }
+      }
+
+      // If all URLs fail, log warning but continue (service might not have health endpoint)
+      logger.warn('Wechaty service connection test failed - service may not be reachable', {
+        baseUrl: this.baseUrl,
+        note: 'Will attempt to send messages anyway',
+      });
+      return false;
+    } catch (error) {
+      logger.warn('Error testing Wechaty service connection', {
+        error: error.message,
+        baseUrl: this.baseUrl,
+      });
+      return false;
     }
   }
 
@@ -146,6 +195,14 @@ class WechatyAdapter {
         }
       );
 
+      // Reset error flag on successful poll
+      if (this.pollingErrorLogged) {
+        this.pollingErrorLogged = false;
+        logger.info('Wechaty polling connection restored', {
+          endpoint: `${this.baseUrl}/messages/pending`,
+        });
+      }
+
       if (response.data && response.data.messages) {
         logger.info('[WECHATY POLLING]', {
           type: 'poll_response',
@@ -166,15 +223,30 @@ class WechatyAdapter {
       if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
         // Service not available - this is expected if service isn't running
         // Don't log every poll attempt to avoid spam
+        // Only log once when error first occurs
+        if (!this.pollingErrorLogged) {
+          logger.warn('Error polling Wechaty messages - service not available (will retry silently)', {
+            error: error.message,
+            errorCode: error.code,
+            endpoint: `${this.baseUrl}/messages/pending`,
+            note: 'This error will not be logged again until connection is restored',
+          });
+          this.pollingErrorLogged = true;
+        }
         return;
       }
       
-      // Log other errors (like 404, 401, etc.) but not connection refused
+      // Log other errors (like 404, 401, etc.) but only once
       if (error.response?.status !== 404) {
-        logger.warn('Error polling Wechaty messages', {
-          error: error.message,
-          status: error.response?.status,
-        });
+        if (!this.pollingErrorLogged) {
+          logger.warn('Error polling Wechaty messages', {
+            error: error.message,
+            status: error.response?.status,
+            endpoint: `${this.baseUrl}/messages/pending`,
+            note: 'This error will not be logged again until connection is restored',
+          });
+          this.pollingErrorLogged = true;
+        }
       }
     }
   }
@@ -323,8 +395,20 @@ class WechatyAdapter {
             'Content-Type': 'application/json',
           },
           timeout: 30000, // 30 second timeout
+          validateStatus: () => true, // Don't throw on HTTP errors, handle them below
         }
       );
+      
+      // Check if response indicates an error
+      if (response.status < 200 || response.status >= 300) {
+        logger.error('Wechaty service returned error status', {
+          status: response.status,
+          statusText: response.statusText,
+          data: response.data,
+          endpoint: endpoint,
+        });
+        return false;
+      }
 
       logger.debug('Message sent to WeChat group via adapter', {
         groupId,
