@@ -107,13 +107,21 @@ router.post('/webhook', async (req, res) => {
       };
 
       // Log the raw body for debugging (first time only to avoid spam)
+      // Safely convert body to string for preview
+      const bodyPreview = message.body 
+        ? (typeof message.body === 'string' 
+            ? message.body.substring(0, 50) 
+            : JSON.stringify(message.body).substring(0, 50))
+        : null;
+      
       logger.info('WhatsApp webhook received (custom format)', {
         bodyKeys: Object.keys(body || {}),
         extractedMessage: {
           hasFrom: !!message.from,
           hasBody: !!message.body,
+          bodyType: typeof message.body,
           from: message.from,
-          bodyPreview: message.body ? message.body.substring(0, 50) : null,
+          bodyPreview: bodyPreview,
           groupId: message.groupId,
         },
       });
@@ -143,8 +151,19 @@ router.post('/webhook', async (req, res) => {
  * @returns {string} Formatted message string
  */
 function formatWhatsAppMessageForWeChat(message) {
-  // Extract message text
-  const messageText = message.body || message.text || message.message || '';
+  // Extract message text - handle both string and object formats
+  let messageText = '';
+  const rawBody = message.body || message.text || message.message || message.content || message.data || message.payload || '';
+  
+  // Convert to string if it's an object
+  if (typeof rawBody === 'string') {
+    messageText = rawBody;
+  } else if (typeof rawBody === 'object' && rawBody !== null) {
+    // If body is an object, try to extract text from common fields
+    messageText = rawBody.text || rawBody.body || rawBody.message || rawBody.content || JSON.stringify(rawBody);
+  } else {
+    messageText = String(rawBody || '');
+  }
 
   // Extract sender name/number
   const senderName = message.from || message.sender || 'Unknown';
