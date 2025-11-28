@@ -4,6 +4,7 @@ const whatsappConfig = require('../config/whatsappConfig');
 const { validateWhatsAppMessage, validateSessionId } = require('../utils/validator');
 const { logger, logWhatsAppMessage } = require('../services/logger');
 const getSessionController = require('../controllers/sessionController');
+const getWechatyAdapter = require('../services/wechatyAdapter');
 
 /**
  * Webhook verification endpoint (for WhatsApp Business API)
@@ -69,12 +70,116 @@ router.post('/webhook', async (req, res) => {
 });
 
 /**
+ * Format WhatsApp message for forwarding to WeChat
+ * @param {Object} message - WhatsApp message object
+ * @returns {string} Formatted message string
+ */
+function formatWhatsAppMessageForWeChat(message) {
+  // Extract message text
+  const messageText = message.body || message.text || message.message || '';
+
+  // Extract sender name/number
+  const senderName = message.from || message.sender || 'Unknown';
+
+  // Extract and format timestamp
+  let formattedTime = '';
+  if (message.timestamp) {
+    try {
+      // Convert Unix timestamp (seconds) to milliseconds if needed
+      const timestamp = typeof message.timestamp === 'string' 
+        ? new Date(message.timestamp) 
+        : new Date(message.timestamp * 1000);
+      
+      // Extract date in dd-mm-yyyy format
+      const day = String(timestamp.getDate()).padStart(2, '0');
+      const month = String(timestamp.getMonth() + 1).padStart(2, '0');
+      const year = timestamp.getFullYear();
+      const dateFormatted = `${day}-${month}-${year}`;
+      
+      // Extract time in HH:MM:SS format
+      const hours = String(timestamp.getHours()).padStart(2, '0');
+      const minutes = String(timestamp.getMinutes()).padStart(2, '0');
+      const seconds = String(timestamp.getSeconds()).padStart(2, '0');
+      const timeFormatted = `${hours}:${minutes}:${seconds}`;
+      
+      formattedTime = `${dateFormatted} ${timeFormatted}`;
+    } catch (e) {
+      const now = new Date();
+      const day = String(now.getDate()).padStart(2, '0');
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const year = now.getFullYear();
+      const dateFormatted = `${day}-${month}-${year}`;
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const seconds = String(now.getSeconds()).padStart(2, '0');
+      const timeFormatted = `${hours}:${minutes}:${seconds}`;
+      formattedTime = `${dateFormatted} ${timeFormatted}`;
+    }
+  } else {
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = now.getFullYear();
+    const dateFormatted = `${day}-${month}-${year}`;
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    const timeFormatted = `${hours}:${minutes}:${seconds}`;
+    formattedTime = `${dateFormatted} ${timeFormatted}`;
+  }
+
+  // Format: [WhatsApp → WeChat]
+  // From: 
+  // Time: {dd-mm-yyyy} {HH:MM:SS}
+  // Message text
+  return `[WhatsApp → WeChat]\n\nFrom: ${senderName}\nTime: ${formattedTime}\n\n${messageText}`;
+}
+
+/**
+ * Forward WhatsApp message to WeChat group
+ * @param {Object} message - WhatsApp message object
+ */
+async function forwardMessageToWeChatGroup(message) {
+  try {
+    const wechatGroupId = '27551115736@chatroom';
+    const wechatyAdapter = getWechatyAdapter();
+    
+    // Format message with sender name and time
+    const formattedMessage = formatWhatsAppMessageForWeChat(message);
+
+    logger.info('Forwarding WhatsApp message to WeChat group', {
+      groupId: wechatGroupId,
+      from: message.from || message.sender,
+      preview: formattedMessage.slice(0, 120),
+    });
+
+    // Initialize adapter if not ready
+    if (!wechatyAdapter.isReady) {
+      await wechatyAdapter.initialize();
+    }
+
+    const sent = await wechatyAdapter.sendToGroup(wechatGroupId, formattedMessage);
+
+    if (!sent) {
+      logger.error('Failed to forward WhatsApp message to WeChat group', {
+        groupId: wechatGroupId,
+      });
+    }
+  } catch (error) {
+    logger.error('Error forwarding WhatsApp message to WeChat group', error);
+  }
+}
+
+/**
  * Process incoming WhatsApp message
  * @param {Object} message - WhatsApp message object
  */
 async function processWhatsAppMessage(message) {
   try {
     logWhatsAppMessage(message.messageId || 'unknown', message);
+
+    // Forward message to WeChat group
+    await forwardMessageToWeChatGroup(message);
 
     // Session/routing workflow disabled.
     logger.info('Session workflow disabled - ignoring WhatsApp inbound message', {
