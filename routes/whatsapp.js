@@ -49,8 +49,9 @@ router.post('/webhook', async (req, res) => {
         }
       }
     } else {
-      // Handle custom webhook format (including IFTTT format)
+      // Handle custom webhook format (including IFTTT format, wsmanager format)
       // IFTTT typically sends: { value1, value2, value3 } or custom JSON
+      // wsmanager may send different formats depending on webhook pattern
       
       // Check if this is a message webhook or a status/event webhook
       // Status webhooks (delivery receipts, read receipts, etc.) don't have message content
@@ -67,12 +68,55 @@ router.post('/webhook', async (req, res) => {
         return;
       }
       
+      // Extract message fields - support multiple formats including wsmanager
+      // wsmanager may use: from, sender, author, contact, phone, number, participant
+      // wsmanager may use: body, text, message, content, data, payload
       const message = {
-        from: body.from || body.sender || body.value1 || body.phone || body.number,
-        body: body.body || body.text || body.message || body.value2 || body.content,
-        messageId: body.messageId || body.id || body.value3 || `msg_${Date.now()}`,
-        timestamp: body.timestamp || body.time || Date.now(),
+        from: body.from || 
+              body.sender || 
+              body.author || 
+              body.contact || 
+              body.phone || 
+              body.number || 
+              body.participant ||
+              body.value1,  // IFTTT format
+        body: body.body || 
+              body.text || 
+              body.message || 
+              body.content || 
+              body.data || 
+              body.payload ||
+              body.value2,  // IFTTT format
+        messageId: body.messageId || 
+                   body.id || 
+                   body.message_id ||
+                   body.msgId ||
+                   body.value3 ||  // IFTTT format
+                   `msg_${Date.now()}`,
+        timestamp: body.timestamp || 
+                   body.time || 
+                   body.created_at ||
+                   body.date ||
+                   Date.now(),
+        // Also extract group ID if present (for filtering)
+        groupId: body.groupId || 
+                 body.group_id || 
+                 body.chatId || 
+                 body.chat_id ||
+                 body.to,
       };
+
+      // Log the raw body for debugging (first time only to avoid spam)
+      logger.info('WhatsApp webhook received (custom format)', {
+        bodyKeys: Object.keys(body || {}),
+        extractedMessage: {
+          hasFrom: !!message.from,
+          hasBody: !!message.body,
+          from: message.from,
+          bodyPreview: message.body ? message.body.substring(0, 50) : null,
+          groupId: message.groupId,
+        },
+      });
 
       if (validateWhatsAppMessage(message)) {
         await processWhatsAppMessage(message);
@@ -80,9 +124,11 @@ router.post('/webhook', async (req, res) => {
         // Log with more details to help debug
         logger.warn('Invalid WhatsApp message format received', { 
           body,
+          extractedMessage: message,
           hasFrom: !!message.from,
           hasBody: !!message.body,
           bodyKeys: Object.keys(body || {}),
+          bodySample: JSON.stringify(body).substring(0, 500), // First 500 chars for debugging
         });
       }
     }
