@@ -303,7 +303,7 @@ class WechatyAdapter {
       // Endpoint: /api/send (as per Wechaty service)
       const endpoint = `${this.baseUrl}/api/send`;
       
-      logger.info('Sending message to Wechaty service', {
+      logger.debug('Sending message to Wechaty service', {
         baseUrl: this.baseUrl,
         endpoint: endpoint,
         groupId: groupId,
@@ -326,57 +326,79 @@ class WechatyAdapter {
         }
       );
 
-      logger.info('Message sent to WeChat group via adapter', {
+      logger.debug('Message sent to WeChat group via adapter', {
         groupId,
-        messageText,
         status: response.status,
         endpoint: `${this.baseUrl}/api/send`,
-        timestamp: new Date().toISOString(),
       });
       
-      // Detailed log for all Wechaty communication
-      logger.info('[WECHATY OUTGOING]', {
+      // Detailed log for all Wechaty communication (debug level to reduce noise)
+      logger.debug('[WECHATY OUTGOING]', {
         type: 'send_message',
         direction: 'backend → wechaty',
         groupId,
-        message: messageText,
         endpoint: `${this.baseUrl}/api/send`,
-        requestBody: {
-          groupId,
-          message: messageText,
-        },
         responseStatus: response.status,
-        responseData: response.data,
         timestamp: new Date().toISOString(),
       });
 
       return response.status === 200 || response.status === 201;
     } catch (error) {
-      // Log detailed error information
-      logger.error('Error sending message to WeChat group via adapter', {
-        error: error.message,
-        errorCode: error.code,
+      // Log detailed error information - ensure all details are captured
+      const errorDetails = {
+        error: error.message || 'Unknown error',
+        errorCode: error.code || 'NO_CODE',
+        errorName: error.name || 'Error',
         groupId,
         baseUrl: this.baseUrl,
         endpoint: `${this.baseUrl}/api/send`,
-        responseStatus: error.response?.status,
-        responseData: error.response?.data,
+        responseStatus: error.response?.status || 'N/A',
+        responseStatusText: error.response?.statusText || 'N/A',
+        responseData: error.response?.data || 'N/A',
         requestBody: {
           groupId,
           message: messageText?.substring(0, 100), // Preview only
         },
-      });
+        stack: error.stack || 'No stack trace',
+      };
       
-      // Log failed send attempt
+      logger.error('Error sending message to WeChat group via adapter', errorDetails);
+      
+      // Also log a more readable summary
+      if (error.code === 'ECONNREFUSED') {
+        logger.error('Connection refused - Wechaty service may not be running or URL is incorrect', {
+          baseUrl: this.baseUrl,
+          endpoint: `${this.baseUrl}/api/send`,
+        });
+      } else if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
+        logger.error('Connection timeout - Wechaty service may be slow or unreachable', {
+          baseUrl: this.baseUrl,
+          endpoint: `${this.baseUrl}/api/send`,
+        });
+      } else if (error.response?.status === 401) {
+        logger.error('Unauthorized - Check WECHATY_API_KEY is correct', {
+          hasApiKey: !!this.apiKey,
+        });
+      } else if (error.response?.status === 404) {
+        logger.error('Endpoint not found - Check if /api/send endpoint exists on Wechaty service', {
+          endpoint: `${this.baseUrl}/api/send`,
+        });
+      } else if (error.response?.status >= 500) {
+        logger.error('Wechaty service error - Service returned server error', {
+          status: error.response?.status,
+          data: error.response?.data,
+        });
+      }
+      
+      // Log failed send attempt (keep error but reduce verbosity)
       logger.error('[WECHATY OUTGOING FAILED]', {
         type: 'send_message_failed',
         direction: 'backend → wechaty',
         endpoint: `${this.baseUrl}/api/send`,
         groupId,
-        message: messageText?.substring(0, 100), // Preview only
         error: error.message,
         errorCode: error.code,
-        errorDetails: error.response?.data || error.stack,
+        responseStatus: error.response?.status,
         timestamp: new Date().toISOString(),
       });
       

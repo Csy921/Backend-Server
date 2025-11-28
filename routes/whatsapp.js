@@ -285,10 +285,9 @@ async function forwardMessageToWeChatGroup(message) {
     // Format message with sender name and time
     const formattedMessage = formatWhatsAppMessageForWeChat(message);
 
-    logger.info('Forwarding WhatsApp message to WeChat group', {
+    logger.debug('Forwarding WhatsApp message to WeChat group', {
       groupId: wechatGroupId,
       from: message.from || message.sender || message.senderNumber || message.senderName,
-      preview: formattedMessage.slice(0, 120),
       adapterReady: wechatyAdapter.isReady,
     });
 
@@ -310,16 +309,14 @@ async function forwardMessageToWeChatGroup(message) {
     const sent = await wechatyAdapter.sendToGroup(wechatGroupId, formattedMessage);
 
     if (sent) {
-      logger.info('Successfully forwarded WhatsApp message to WeChat group', {
+      logger.debug('Successfully forwarded WhatsApp message to WeChat group', {
         groupId: wechatGroupId,
         from: message.from || message.sender || message.senderNumber || message.senderName,
       });
     } else {
-      logger.error('Failed to forward WhatsApp message to WeChat group', {
+      // Only log errors, not failures (errors are logged in wechatyAdapter)
+      logger.debug('Message forwarding returned false', {
         groupId: wechatGroupId,
-        from: message.from || message.sender || message.senderNumber || message.senderName,
-        adapterReady: wechatyAdapter.isReady,
-        baseUrl: wechatyAdapter.baseUrl,
       });
     }
   } catch (error) {
@@ -338,16 +335,15 @@ async function forwardMessageToWeChatGroup(message) {
  */
 async function processWhatsAppMessage(message) {
   try {
-    logWhatsAppMessage(message.messageId || 'unknown', message);
+    // Log message receipt (without full content)
+    logger.debug('WhatsApp message received', {
+      messageId: message.messageId || 'unknown',
+      from: message.from || message.sender || message.senderNumber || message.senderName,
+      hasContent: !!(message.body || message.text || message.messageBody),
+    });
 
     // Forward message to WeChat group
     await forwardMessageToWeChatGroup(message);
-
-    // Session/routing workflow disabled.
-    logger.info('Session workflow disabled - ignoring WhatsApp inbound message', {
-      from: message.from || message.sender,
-      preview: (message.body || '').slice(0, 120),
-    });
   } catch (error) {
     logger.error('Error processing WhatsApp message', error);
   }
