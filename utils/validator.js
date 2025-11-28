@@ -11,7 +11,9 @@ function validateWhatsAppMessage(message) {
   if (!message) return false;
   // Require at least one of: from/sender/author/contact/phone/number/participant AND body/text/message/content/data/payload
   // This allows for more flexible formats including wsmanager
-  const hasSender = !!(
+  
+  // Check for sender - also handle nested objects
+  let hasSender = !!(
     message.from || 
     message.sender || 
     message.author || 
@@ -20,14 +22,30 @@ function validateWhatsAppMessage(message) {
     message.number || 
     message.participant
   );
-  const hasContent = !!(
-    message.body || 
-    message.text || 
-    message.message || 
-    message.content || 
-    message.data || 
-    message.payload
-  );
+  
+  // If no direct sender, check if it's nested in an object
+  if (!hasSender && typeof message.from === 'object' && message.from !== null) {
+    hasSender = !!(message.from.id || message.from.number || message.from.phone || message.from.name);
+  }
+  
+  // Check for content - handle both string and object formats
+  let hasContent = false;
+  const contentField = message.body || message.text || message.message || message.content || message.data || message.payload;
+  
+  if (contentField) {
+    // If it's a string (even empty string counts as content)
+    if (typeof contentField === 'string') {
+      hasContent = true;
+    }
+    // If it's an object, check if it has text content
+    else if (typeof contentField === 'object' && contentField !== null) {
+      hasContent = !!(contentField.text || contentField.body || contentField.message || contentField.content);
+    }
+    // Other types (number, boolean, etc.) also count as content
+    else {
+      hasContent = true;
+    }
+  }
   
   // Both sender and content are required for a valid message
   if (!hasSender || !hasContent) return false;

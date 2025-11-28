@@ -71,22 +71,45 @@ router.post('/webhook', async (req, res) => {
       // Extract message fields - support multiple formats including wsmanager
       // wsmanager may use: from, sender, author, contact, phone, number, participant
       // wsmanager may use: body, text, message, content, data, payload
+      // Also handle nested objects (e.g., body.from.id, body.message.text)
+      
+      // Extract sender - handle both flat and nested formats
+      let from = body.from || 
+                 body.sender || 
+                 body.author || 
+                 body.contact || 
+                 body.phone || 
+                 body.number || 
+                 body.participant ||
+                 body.value1;  // IFTTT format
+      
+      // If from is an object, extract the actual value
+      if (from && typeof from === 'object' && from !== null) {
+        from = from.id || from.number || from.phone || from.name || from.value || JSON.stringify(from);
+      }
+      
+      // Extract body/content - handle both flat and nested formats
+      let messageBody = body.body || 
+                        body.text || 
+                        body.message || 
+                        body.content || 
+                        body.data || 
+                        body.payload ||
+                        body.value2;  // IFTTT format
+      
+      // If body is an object, extract text from common fields
+      if (messageBody && typeof messageBody === 'object' && messageBody !== null) {
+        messageBody = messageBody.text || 
+                      messageBody.body || 
+                      messageBody.message || 
+                      messageBody.content ||
+                      messageBody.data ||
+                      JSON.stringify(messageBody);
+      }
+      
       const message = {
-        from: body.from || 
-              body.sender || 
-              body.author || 
-              body.contact || 
-              body.phone || 
-              body.number || 
-              body.participant ||
-              body.value1,  // IFTTT format
-        body: body.body || 
-              body.text || 
-              body.message || 
-              body.content || 
-              body.data || 
-              body.payload ||
-              body.value2,  // IFTTT format
+        from: from,
+        body: messageBody,
         messageId: body.messageId || 
                    body.id || 
                    body.message_id ||
@@ -129,14 +152,36 @@ router.post('/webhook', async (req, res) => {
       if (validateWhatsAppMessage(message)) {
         await processWhatsAppMessage(message);
       } else {
-        // Log with more details to help debug
+        // Log with more details to help debug - include full body structure
         logger.warn('Invalid WhatsApp message format received', { 
-          body,
+          fullBody: body, // Log entire body for debugging
           extractedMessage: message,
           hasFrom: !!message.from,
           hasBody: !!message.body,
+          bodyType: typeof message.body,
           bodyKeys: Object.keys(body || {}),
-          bodySample: JSON.stringify(body).substring(0, 500), // First 500 chars for debugging
+          bodySample: JSON.stringify(body).substring(0, 1000), // First 1000 chars for debugging
+          validationDetails: {
+            hasSender: !!(message.from || message.sender || message.author || message.contact || message.phone || message.number || message.participant),
+            hasContent: !!(message.body || message.text || message.message || message.content || message.data || message.payload),
+            senderFields: {
+              from: message.from,
+              sender: message.sender,
+              author: message.author,
+              contact: message.contact,
+              phone: message.phone,
+              number: message.number,
+              participant: message.participant,
+            },
+            contentFields: {
+              body: message.body,
+              text: message.text,
+              message: message.message,
+              content: message.content,
+              data: message.data,
+              payload: message.payload,
+            },
+          },
         });
       }
     }
