@@ -87,23 +87,40 @@ function formatMessageWithMetadata(message) {
   const chat = message.chat || {};
   const groupName = chat.groupName || message.groupName || message.roomName || 'Unknown Group';
 
-  // Extract and format timestamp in ISO format
+  // Extract and format timestamp from Wechaty
   let formattedTime = '';
   if (message.timestamp) {
     try {
-      const timestamp = new Date(message.timestamp);
-      formattedTime = timestamp.toISOString();
+      // Use the original timestamp from Wechaty
+      const originalTimestamp = message.timestamp;
+      const timestamp = new Date(originalTimestamp);
+      
+      // Extract date in dd-mm-yyyy format
+      const day = String(timestamp.getDate()).padStart(2, '0');
+      const month = String(timestamp.getMonth() + 1).padStart(2, '0');
+      const year = timestamp.getFullYear();
+      const dateFormatted = `${day}-${month}-${year}`;
+      
+      // Format: Time: {dd-mm-yyyy} {original timestamp from wechaty}
+      formattedTime = `${dateFormatted} ${originalTimestamp}`;
     } catch (e) {
-      formattedTime = new Date().toISOString();
+      // Fallback: if timestamp parsing fails, use original timestamp as-is
+      formattedTime = message.timestamp;
     }
   } else {
-    formattedTime = new Date().toISOString();
+    // If no timestamp provided, use current time
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = now.getFullYear();
+    const dateFormatted = `${day}-${month}-${year}`;
+    formattedTime = `${dateFormatted} ${now.toISOString()}`;
   }
 
   // Format: [WeChat → WhatsApp]
   // From: 
   // Group: 
-  // Time: 2025-11-27T08:27:22.208Z
+  // Time: {dd-mm-yyyy} {timestamp from wechaty}
   // Message text
   return `[WeChat → WhatsApp]\n\nFrom: ${senderName}\nGroup: ${groupName}\nTime: ${formattedTime}\n\n${messageText}`;
 }
