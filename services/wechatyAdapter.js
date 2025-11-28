@@ -182,20 +182,26 @@ class WechatyAdapter {
    */
   async handleMessage(message) {
     try {
-      // Expected message format from Wechaty service:
-      // {
-      //   message: "The message text content",
-      //   sender: { id: "wxid_xxx", name: "Contact Name" },
-      //   chat: { isGroup: true, groupId: "27551115736@chatroom", groupName: "Group Name" },
-      //   timestamp: "2025-11-24T13:47:12.000Z"
-      // }
+      // Support multiple message formats:
+      // 1. New Wechaty format: { roomId, roomTopic, talkerName, text, timestamp, isGroup }
+      // 2. Old nested format: { chat: { groupId, isGroup }, sender: { name }, message, timestamp }
+      // 3. Old flat format: { groupId/roomId, from, text, timestamp }
 
-      // Extract group ID from chat object
+      // Extract group ID - support all formats
       const chat = message.chat || {};
-      const groupId = chat.groupId || message.groupId || message.roomId;
+      const groupId = 
+        message.roomId ||        // New Wechaty format
+        chat.groupId ||          // Old nested format
+        message.groupId ||       // Old flat format
+        null;
+      
+      // Check if it's a group message
+      const isGroupMessage = 
+        message.isGroup !== undefined ? message.isGroup :
+        (chat.isGroup !== undefined ? chat.isGroup : true);
       
       // Only process group messages
-      if (!chat.isGroup && !groupId) {
+      if (!isGroupMessage && !groupId) {
         return; // Not a group message
       }
       
@@ -205,10 +211,12 @@ class WechatyAdapter {
 
       const sessionId = this.getSessionFromGroup(groupId);
       if (!sessionId) {
+        // Extract message text for logging
+        const text = message.text || message.message || message.content || '';
         // Log that message was received but not part of active session
         logger.warn('WeChat message received but not part of active session', {
           groupId,
-          from: message.sender?.name || message.from,
+          from: message.talkerName || message.sender?.name || message.from,
           messageText: text.substring(0, 100),
           availableSessions: Array.from(this.groupToSessionMap.entries()).map(([gid, sid]) => ({
             groupId: gid,
@@ -221,15 +229,23 @@ class WechatyAdapter {
       logger.info('WeChat message matched to session', {
         sessionId,
         groupId,
-        from: message.sender?.name || message.from,
+        from: message.talkerName || message.sender?.name || message.from,
       });
 
-      // Extract sender name
-      const sender = message.sender || {};
-      const from = sender.name || message.from || message.contact || 'Unknown';
+      // Extract sender name - support all formats
+      const from = 
+        message.talkerName ||    // New Wechaty format
+        (message.sender && message.sender.name) ||  // Old nested format
+        message.from ||          // Old flat format
+        message.contact ||       // Fallback
+        'Unknown';
       
-      // Extract message text
-      const text = message.message || message.text || message.content || '';
+      // Extract message text - support all formats
+      const text = 
+        message.text ||          // New Wechaty format (preferred)
+        message.message ||       // Old format
+        message.content ||       // Fallback
+        '';
       
       // Extract timestamp
       const timestamp = message.timestamp || new Date().toISOString();

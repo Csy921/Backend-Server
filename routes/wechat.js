@@ -31,28 +31,58 @@ router.post('/webhook', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
 
+    // Filter out messages from self (if isFromSelf is true)
+    // Also filter out outgoing messages (only process incoming)
+    if (message.isFromSelf === true || message.direction === 'outgoing') {
+      logger.debug('Skipping message from self or outgoing message', {
+        isFromSelf: message.isFromSelf,
+        direction: message.direction,
+      });
+      return;
+    }
+
     // Forward every incoming WeChat message to WhatsApp group (no filters)
+    // This happens regardless of validation - we want to forward all messages
     await forwardMessageToWhatsAppGroup(message);
 
-    // Validate message format
-    // Support both formats:
-    // 1. New format: { chat: { groupId, isGroup }, sender: { name }, message, timestamp }
-    // 2. Old format: { groupId/roomId, from, text, timestamp }
+    // Validate message format for session handling
+    // Support multiple formats:
+    // 1. New Wechaty format: { roomId, roomTopic, talkerName, text, timestamp }
+    // 2. Old nested format: { chat: { groupId, isGroup }, sender: { name }, message, timestamp }
+    // 3. Old flat format: { groupId/roomId, from, text, timestamp }
     const chat = message.chat || {};
-    const hasGroupId = chat.groupId || message.groupId || message.roomId;
-    const isGroup = chat.isGroup !== undefined ? chat.isGroup : true; // Default to true if not specified
+    const hasGroupId = 
+      message.roomId ||        // New Wechaty format
+      chat.groupId ||          // Old nested format
+      message.groupId ||       // Old flat format
+      message.roomId;          // Fallback
+    const isGroup = message.isGroup !== undefined 
+      ? message.isGroup 
+      : (chat.isGroup !== undefined ? chat.isGroup : true); // Default to true if not specified
     
-    if (!message || !hasGroupId) {
-      logger.warn('Invalid WeChat message format received', { 
+    // Only validate if we need to process for sessions
+    // Messages are still forwarded even without groupId
+    if (!message) {
+      logger.warn('Invalid WeChat message format received - empty message', { 
         body: req.body,
-        reason: 'Missing groupId/roomId or chat.groupId'
       });
       return;
     }
     
-    // Handle the message via adapter
-    const wechatyAdapter = getWechatyAdapter();
-    await wechatyAdapter.handleMessage(message);
+    // Only process for session handling if groupId is present
+    // Forwarding to WhatsApp happens regardless
+    if (hasGroupId) {
+      // Handle the message via adapter for session management
+      const wechatyAdapter = getWechatyAdapter();
+      await wechatyAdapter.handleMessage(message);
+    } else {
+      // Log that message was forwarded but not processed for sessions
+      logger.info('WeChat message forwarded to WhatsApp but no groupId for session handling', {
+        hasMessage: !!(message.text || message.message || message.content),
+        hasSender: !!(message.talkerName || message.sender?.name || message.from),
+        body: req.body,
+      });
+    }
   } catch (error) {
     logger.error('Error processing WeChat webhook', error);
   }
@@ -85,20 +115,31 @@ router.get('/webhook', (req, res) => {
  */
 function formatMessageWithMetadata(message) {
   // Extract message text
+  // Support both old format and new Wechaty format
   const messageText =
-    message.message ||
-    message.text ||
-    message.content ||
-    message.payload ||
+    message.text ||           // New Wechaty format
+    message.message ||        // Old format
+    message.content ||        // Fallback
+    message.payload ||        // Fallback
     '';
 
   // Extract sender name
-  const sender = message.sender || {};
-  const senderName = sender.name || message.from || message.contact || 'Unknown';
+  // Support both old format and new Wechaty format
+  const senderName =
+    message.talkerName ||     // New Wechaty format
+    (message.sender && message.sender.name) ||  // Old nested format
+    message.from ||           // Old flat format
+    message.contact ||        // Fallback
+    'Unknown';
 
   // Extract group name
-  const chat = message.chat || {};
-  const groupName = chat.groupName || message.groupName || message.roomName || 'Unknown Group';
+  // Support both old format and new Wechaty format
+  const groupName =
+    message.roomTopic ||      // New Wechaty format
+    (message.chat && message.chat.groupName) ||  // Old nested format
+    message.groupName ||      // Old flat format
+    message.roomName ||       // Fallback
+    'Unknown Group';
 
   // Extract and format timestamp from Wechaty
   let formattedTime = '';
@@ -183,6 +224,16 @@ async function forwardMessageToWhatsAppGroup(message) {
       return;
     }
 
+    // Check if message has any content to forward
+    const hasContent = !!(message.message || message.text || message.content || message.payload);
+    if (!hasContent) {
+      logger.warn('WeChat message has no content to forward', {
+        messageKeys: Object.keys(message || {}),
+        body: message,
+      });
+      return;
+    }
+
     const whatsappAdapter = getWhatsAppAdapter();
     
     // Format message with sender name, group name, and time
@@ -190,20 +241,30 @@ async function forwardMessageToWhatsAppGroup(message) {
 
     logger.info('Forwarding WeChat message content to WhatsApp group', {
       groupId: salesGroupId,
-      sender: message.sender?.name || message.from,
-      groupName: message.chat?.groupName || message.groupName,
+      sender: message.talkerName || message.sender?.name || message.from || 'Unknown',
+      groupName: message.roomTopic || message.chat?.groupName || message.groupName || 'Unknown Group',
+      messageLength: formattedMessage.length,
       preview: formattedMessage.slice(0, 120),
     });
 
     const sent = await whatsappAdapter.sendToGroup(salesGroupId, formattedMessage);
 
-    if (!sent) {
+    if (sent) {
+      logger.info('Successfully forwarded WeChat message to WhatsApp group', {
+        groupId: salesGroupId,
+      });
+    } else {
       logger.error('Failed to forward WeChat message to WhatsApp group', {
         groupId: salesGroupId,
+        formattedMessageLength: formattedMessage.length,
       });
     }
   } catch (error) {
-    logger.error('Error forwarding WeChat message to WhatsApp group', error);
+    logger.error('Error forwarding WeChat message to WhatsApp group', {
+      error: error.message,
+      stack: error.stack,
+      messageKeys: message ? Object.keys(message) : 'no message',
+    });
   }
 }
 
