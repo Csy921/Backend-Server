@@ -67,6 +67,7 @@ class WechatyAdapter {
             'Authorization': `Bearer ${this.apiKey}`,
             'Content-Type': 'application/json',
           },
+          timeout: 30000, // 30 seconds timeout for webhook registration
         }
       );
 

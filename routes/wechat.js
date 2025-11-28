@@ -66,6 +66,19 @@ router.get('/health', (req, res) => {
 });
 
 /**
+ * Webhook verification endpoint (for Wechaty service to verify webhook)
+ * This endpoint responds immediately to help with webhook registration
+ */
+router.get('/webhook', (req, res) => {
+  // Respond immediately for webhook verification
+  res.status(200).json({ 
+    status: 'ok', 
+    message: 'Webhook endpoint is active',
+    timestamp: new Date().toISOString()
+  });
+});
+
+/**
  * Format message with sender name, group name, and timestamp
  * @param {Object} message - Raw message payload from Wechaty service
  * @returns {string} Formatted message string
