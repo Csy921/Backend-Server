@@ -91,23 +91,38 @@ function formatMessageWithMetadata(message) {
   let formattedTime = '';
   if (message.timestamp) {
     try {
-      // Use the original timestamp from Wechaty
-      const timestamp = new Date(message.timestamp);
+      // Parse timestamp string directly to preserve timezone
+      // Format: "2025-11-28T13:13:07.032+08:00"
+      const timestampStr = message.timestamp;
       
-      // Extract date in dd-mm-yyyy format
-      const day = String(timestamp.getDate()).padStart(2, '0');
-      const month = String(timestamp.getMonth() + 1).padStart(2, '0');
-      const year = timestamp.getFullYear();
-      const dateFormatted = `${day}-${month}-${year}`;
+      // Extract date and time parts directly from the ISO string
+      // Match pattern: YYYY-MM-DDTHH:MM:SS
+      const isoMatch = timestampStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
       
-      // Extract time in HH:MM:SS format
-      const hours = String(timestamp.getHours()).padStart(2, '0');
-      const minutes = String(timestamp.getMinutes()).padStart(2, '0');
-      const seconds = String(timestamp.getSeconds()).padStart(2, '0');
-      const timeFormatted = `${hours}:${minutes}:${seconds}`;
-      
-      // Format: Time: {dd-mm-yyyy} {HH:MM:SS}
-      formattedTime = `${dateFormatted} ${timeFormatted}`;
+      if (isoMatch) {
+        // isoMatch[1] = year, [2] = month, [3] = day, [4] = hour, [5] = minute, [6] = second
+        const year = isoMatch[1];
+        const month = isoMatch[2];
+        const day = isoMatch[3];
+        const hours = isoMatch[4];
+        const minutes = isoMatch[5];
+        const seconds = isoMatch[6];
+        
+        // Format: dd-mm-yyyy HH:MM:SS
+        formattedTime = `${day}-${month}-${year} ${hours}:${minutes}:${seconds}`;
+      } else {
+        // Fallback: try parsing with Date object
+        const timestamp = new Date(timestampStr);
+        const day = String(timestamp.getDate()).padStart(2, '0');
+        const month = String(timestamp.getMonth() + 1).padStart(2, '0');
+        const year = timestamp.getFullYear();
+        const dateFormatted = `${day}-${month}-${year}`;
+        const hours = String(timestamp.getHours()).padStart(2, '0');
+        const minutes = String(timestamp.getMinutes()).padStart(2, '0');
+        const seconds = String(timestamp.getSeconds()).padStart(2, '0');
+        const timeFormatted = `${hours}:${minutes}:${seconds}`;
+        formattedTime = `${dateFormatted} ${timeFormatted}`;
+      }
     } catch (e) {
       // Fallback: if timestamp parsing fails, use current time
       const now = new Date();
