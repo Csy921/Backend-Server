@@ -66,6 +66,70 @@ router.get('/health', (req, res) => {
 });
 
 /**
+ * Format message with sender name, group name, and timestamp
+ * @param {Object} message - Raw message payload from Wechaty service
+ * @returns {string} Formatted message string
+ */
+function formatMessageWithMetadata(message) {
+  // Extract message text
+  const messageText =
+    message.message ||
+    message.text ||
+    message.content ||
+    message.payload ||
+    '';
+
+  // Extract sender name
+  const sender = message.sender || {};
+  const senderName = sender.name || message.from || message.contact || 'Unknown';
+
+  // Extract group name
+  const chat = message.chat || {};
+  const groupName = chat.groupName || message.groupName || message.roomName || 'Unknown Group';
+
+  // Extract and format timestamp
+  let formattedTime = '';
+  if (message.timestamp) {
+    try {
+      const timestamp = new Date(message.timestamp);
+      formattedTime = timestamp.toLocaleString('en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      });
+    } catch (e) {
+      formattedTime = new Date().toLocaleString('en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      });
+    }
+  } else {
+    formattedTime = new Date().toLocaleString('en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+  }
+
+  // Format: [Time] Group: GroupName | Sender: SenderName
+  // Message text
+  return `[${formattedTime}] Group: ${groupName} | Sender: ${senderName}\n${messageText}`;
+}
+
+/**
  * Forward all incoming WeChat messages to the configured WhatsApp group
  * @param {Object} message - Raw message payload from Wechaty service
  */
@@ -78,19 +142,18 @@ async function forwardMessageToWhatsAppGroup(message) {
     }
 
     const whatsappAdapter = getWhatsAppAdapter();
-    const textContent =
-      message.message ||
-      message.text ||
-      message.content ||
-      message.payload ||
-      (typeof message === 'string' ? message : JSON.stringify(message));
+    
+    // Format message with sender name, group name, and time
+    const formattedMessage = formatMessageWithMetadata(message);
 
     logger.info('Forwarding WeChat message content to WhatsApp group', {
       groupId: salesGroupId,
-      preview: textContent.slice(0, 120),
+      sender: message.sender?.name || message.from,
+      groupName: message.chat?.groupName || message.groupName,
+      preview: formattedMessage.slice(0, 120),
     });
 
-    const sent = await whatsappAdapter.sendToGroup(salesGroupId, textContent);
+    const sent = await whatsappAdapter.sendToGroup(salesGroupId, formattedMessage);
 
     if (!sent) {
       logger.error('Failed to forward WeChat message to WhatsApp group', {
