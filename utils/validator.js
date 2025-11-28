@@ -9,7 +9,13 @@
  */
 function validateWhatsAppMessage(message) {
   if (!message) return false;
-  if (!message.from || !message.body) return false;
+  // Require at least one of: from/sender AND body/text/message/content
+  // This allows for more flexible formats
+  const hasSender = !!(message.from || message.sender || message.phone || message.number);
+  const hasContent = !!(message.body || message.text || message.message || message.content);
+  
+  // Both sender and content are required for a valid message
+  if (!hasSender || !hasContent) return false;
   return true;
 }
 

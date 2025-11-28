@@ -51,6 +51,22 @@ router.post('/webhook', async (req, res) => {
     } else {
       // Handle custom webhook format (including IFTTT format)
       // IFTTT typically sends: { value1, value2, value3 } or custom JSON
+      
+      // Check if this is a message webhook or a status/event webhook
+      // Status webhooks (delivery receipts, read receipts, etc.) don't have message content
+      const isStatusWebhook = body.status || body.type === 'status' || body.event || 
+                              (body.entry && body.entry[0]?.changes?.[0]?.value?.statuses);
+      
+      if (isStatusWebhook) {
+        // This is a status/event webhook, not a message - ignore it
+        logger.debug('WhatsApp status webhook received (ignored)', {
+          type: body.type,
+          status: body.status,
+          event: body.event,
+        });
+        return;
+      }
+      
       const message = {
         from: body.from || body.sender || body.value1 || body.phone || body.number,
         body: body.body || body.text || body.message || body.value2 || body.content,
@@ -61,7 +77,13 @@ router.post('/webhook', async (req, res) => {
       if (validateWhatsAppMessage(message)) {
         await processWhatsAppMessage(message);
       } else {
-        logger.warn('Invalid WhatsApp message format received', { body });
+        // Log with more details to help debug
+        logger.warn('Invalid WhatsApp message format received', { 
+          body,
+          hasFrom: !!message.from,
+          hasBody: !!message.body,
+          bodyKeys: Object.keys(body || {}),
+        });
       }
     }
   } catch (error) {
