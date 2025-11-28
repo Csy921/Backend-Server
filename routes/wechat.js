@@ -92,8 +92,7 @@ function formatMessageWithMetadata(message) {
   if (message.timestamp) {
     try {
       // Use the original timestamp from Wechaty
-      const originalTimestamp = message.timestamp;
-      const timestamp = new Date(originalTimestamp);
+      const timestamp = new Date(message.timestamp);
       
       // Extract date in dd-mm-yyyy format
       const day = String(timestamp.getDate()).padStart(2, '0');
@@ -101,11 +100,26 @@ function formatMessageWithMetadata(message) {
       const year = timestamp.getFullYear();
       const dateFormatted = `${day}-${month}-${year}`;
       
-      // Format: Time: {dd-mm-yyyy} {original timestamp from wechaty}
-      formattedTime = `${dateFormatted} ${originalTimestamp}`;
+      // Extract time in HH:MM:SS format
+      const hours = String(timestamp.getHours()).padStart(2, '0');
+      const minutes = String(timestamp.getMinutes()).padStart(2, '0');
+      const seconds = String(timestamp.getSeconds()).padStart(2, '0');
+      const timeFormatted = `${hours}:${minutes}:${seconds}`;
+      
+      // Format: Time: {dd-mm-yyyy} {HH:MM:SS}
+      formattedTime = `${dateFormatted} ${timeFormatted}`;
     } catch (e) {
-      // Fallback: if timestamp parsing fails, use original timestamp as-is
-      formattedTime = message.timestamp;
+      // Fallback: if timestamp parsing fails, use current time
+      const now = new Date();
+      const day = String(now.getDate()).padStart(2, '0');
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const year = now.getFullYear();
+      const dateFormatted = `${day}-${month}-${year}`;
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const seconds = String(now.getSeconds()).padStart(2, '0');
+      const timeFormatted = `${hours}:${minutes}:${seconds}`;
+      formattedTime = `${dateFormatted} ${timeFormatted}`;
     }
   } else {
     // If no timestamp provided, use current time
@@ -114,7 +128,11 @@ function formatMessageWithMetadata(message) {
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const year = now.getFullYear();
     const dateFormatted = `${day}-${month}-${year}`;
-    formattedTime = `${dateFormatted} ${now.toISOString()}`;
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    const timeFormatted = `${hours}:${minutes}:${seconds}`;
+    formattedTime = `${dateFormatted} ${timeFormatted}`;
   }
 
   // Format: [WeChat → WhatsApp]
