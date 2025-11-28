@@ -13,6 +13,7 @@ function validateWhatsAppMessage(message) {
   // This allows for more flexible formats including wsmanager
   
   // Check for sender - also handle nested objects
+  // wsmanager uses: senderNumber, senderName
   let hasSender = !!(
     message.from || 
     message.sender || 
@@ -20,7 +21,9 @@ function validateWhatsAppMessage(message) {
     message.contact || 
     message.phone || 
     message.number || 
-    message.participant
+    message.participant ||
+    message.senderNumber ||  // wsmanager format
+    message.senderName       // wsmanager format
   );
   
   // If no direct sender, check if it's nested in an object

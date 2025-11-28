@@ -69,12 +69,15 @@ router.post('/webhook', async (req, res) => {
       }
       
       // Extract message fields - support multiple formats including wsmanager
-      // wsmanager may use: from, sender, author, contact, phone, number, participant
-      // wsmanager may use: body, text, message, content, data, payload
+      // wsmanager format: senderNumber, senderName, messageBody, chatId
+      // Also support: from, sender, author, contact, phone, number, participant
+      // Also support: body, text, message, content, data, payload
       // Also handle nested objects (e.g., body.from.id, body.message.text)
       
-      // Extract sender - handle both flat and nested formats
-      let from = body.from || 
+      // Extract sender - handle wsmanager format first, then other formats
+      let from = body.senderNumber ||      // wsmanager format
+                 body.senderName ||        // wsmanager format (fallback to name)
+                 body.from || 
                  body.sender || 
                  body.author || 
                  body.contact || 
@@ -88,8 +91,10 @@ router.post('/webhook', async (req, res) => {
         from = from.id || from.number || from.phone || from.name || from.value || JSON.stringify(from);
       }
       
-      // Extract body/content - handle both flat and nested formats
-      let messageBody = body.body || 
+      // Extract body/content - handle wsmanager format first, then other formats
+      let messageBody = body.messageBody ||  // wsmanager format (preferred)
+                        (body.message && body.message.conversation) ||  // wsmanager nested format
+                        body.body || 
                         body.text || 
                         body.message || 
                         body.content || 
@@ -99,7 +104,8 @@ router.post('/webhook', async (req, res) => {
       
       // If body is an object, extract text from common fields
       if (messageBody && typeof messageBody === 'object' && messageBody !== null) {
-        messageBody = messageBody.text || 
+        messageBody = messageBody.conversation ||  // wsmanager nested format
+                      messageBody.text || 
                       messageBody.body || 
                       messageBody.message || 
                       messageBody.content ||
@@ -122,9 +128,9 @@ router.post('/webhook', async (req, res) => {
                    body.date ||
                    Date.now(),
         // Also extract group ID if present (for filtering)
-        groupId: body.groupId || 
+        groupId: body.chatId ||      // wsmanager format (preferred)
+                 body.groupId || 
                  body.group_id || 
-                 body.chatId || 
                  body.chat_id ||
                  body.to,
       };
