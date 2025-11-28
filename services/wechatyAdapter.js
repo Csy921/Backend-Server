@@ -29,7 +29,11 @@ class WechatyAdapter {
    */
   async initialize() {
     try {
-      logger.info('Initializing Wechaty adapter connection...');
+      logger.info('Initializing Wechaty adapter connection...', {
+        baseUrl: this.baseUrl,
+        hasApiKey: !!this.apiKey,
+        apiKeyLength: this.apiKey ? this.apiKey.length : 0,
+      });
 
       // Option 1: Register webhook with your Wechaty service
       await this.registerWebhook();
@@ -297,8 +301,18 @@ class WechatyAdapter {
 
       // Send via HTTP API
       // Endpoint: /api/send (as per Wechaty service)
+      const endpoint = `${this.baseUrl}/api/send`;
+      
+      logger.info('Sending message to Wechaty service', {
+        baseUrl: this.baseUrl,
+        endpoint: endpoint,
+        groupId: groupId,
+        hasApiKey: !!this.apiKey,
+        messageLength: messageText?.length || 0,
+      });
+
       const response = await axios.post(
-        `${this.baseUrl}/api/send`,
+        endpoint,
         {
           groupId: groupId,
           message: messageText,
@@ -308,6 +322,7 @@ class WechatyAdapter {
             'Authorization': `Bearer ${this.apiKey}`,
             'Content-Type': 'application/json',
           },
+          timeout: 30000, // 30 second timeout
         }
       );
 
@@ -337,10 +352,19 @@ class WechatyAdapter {
 
       return response.status === 200 || response.status === 201;
     } catch (error) {
+      // Log detailed error information
       logger.error('Error sending message to WeChat group via adapter', {
         error: error.message,
+        errorCode: error.code,
         groupId,
         baseUrl: this.baseUrl,
+        endpoint: `${this.baseUrl}/api/send`,
+        responseStatus: error.response?.status,
+        responseData: error.response?.data,
+        requestBody: {
+          groupId,
+          message: messageText?.substring(0, 100), // Preview only
+        },
       });
       
       // Log failed send attempt
@@ -349,8 +373,9 @@ class WechatyAdapter {
         direction: 'backend → wechaty',
         endpoint: `${this.baseUrl}/api/send`,
         groupId,
-        message: messageText,
+        message: messageText?.substring(0, 100), // Preview only
         error: error.message,
+        errorCode: error.code,
         errorDetails: error.response?.data || error.stack,
         timestamp: new Date().toISOString(),
       });

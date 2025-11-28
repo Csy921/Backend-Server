@@ -287,24 +287,48 @@ async function forwardMessageToWeChatGroup(message) {
 
     logger.info('Forwarding WhatsApp message to WeChat group', {
       groupId: wechatGroupId,
-      from: message.from || message.sender,
+      from: message.from || message.sender || message.senderNumber || message.senderName,
       preview: formattedMessage.slice(0, 120),
+      adapterReady: wechatyAdapter.isReady,
     });
 
     // Initialize adapter if not ready
     if (!wechatyAdapter.isReady) {
-      await wechatyAdapter.initialize();
+      logger.info('Wechaty adapter not ready, initializing...');
+      try {
+        await wechatyAdapter.initialize();
+        logger.info('Wechaty adapter initialized successfully');
+      } catch (initError) {
+        logger.error('Failed to initialize Wechaty adapter', {
+          error: initError.message,
+          stack: initError.stack,
+        });
+        throw initError;
+      }
     }
 
     const sent = await wechatyAdapter.sendToGroup(wechatGroupId, formattedMessage);
 
-    if (!sent) {
+    if (sent) {
+      logger.info('Successfully forwarded WhatsApp message to WeChat group', {
+        groupId: wechatGroupId,
+        from: message.from || message.sender || message.senderNumber || message.senderName,
+      });
+    } else {
       logger.error('Failed to forward WhatsApp message to WeChat group', {
         groupId: wechatGroupId,
+        from: message.from || message.sender || message.senderNumber || message.senderName,
+        adapterReady: wechatyAdapter.isReady,
+        baseUrl: wechatyAdapter.baseUrl,
       });
     }
   } catch (error) {
-    logger.error('Error forwarding WhatsApp message to WeChat group', error);
+    logger.error('Error forwarding WhatsApp message to WeChat group', {
+      error: error.message,
+      stack: error.stack,
+      from: message.from || message.sender || message.senderNumber || message.senderName,
+      groupId: '27551115736@chatroom',
+    });
   }
 }
 
