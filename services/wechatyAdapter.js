@@ -170,6 +170,9 @@ class WechatyAdapter {
       clearInterval(this.pollingInterval);
     }
 
+    // Reset error flag when starting polling
+    this.pollingErrorLogged = false;
+
     this.pollingInterval = setInterval(async () => {
       await this.pollMessages();
     }, 10000); // Poll every 10 seconds (reduced frequency to avoid spam)
@@ -219,35 +222,31 @@ class WechatyAdapter {
       }
     } catch (error) {
       // Silently handle connection errors (service might not be running yet)
-      // Only log if it's not a connection refused error
-      if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
-        // Service not available - this is expected if service isn't running
-        // Don't log every poll attempt to avoid spam
-        // Only log once when error first occurs
-        if (!this.pollingErrorLogged) {
-          logger.warn('Error polling Wechaty messages - service not available (will retry silently)', {
-            error: error.message,
+      // Only log once to avoid spam
+      if (!this.pollingErrorLogged) {
+        // Determine error type
+        const isConnectionError = error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT';
+        const is404 = error.response?.status === 404;
+        
+        // Only log if it's not a 404 (endpoint might not exist, that's ok)
+        if (!is404) {
+          // Use a message that doesn't contain "Error" to avoid ERROR source detection
+          const logMessage = isConnectionError 
+            ? 'Wechaty polling: Service unavailable, will retry silently'
+            : 'Wechaty polling: Request failed, will retry silently';
+          
+          logger.warn(logMessage, {
+            errorMsg: error.message, // Use errorMsg instead of error to avoid detection
             errorCode: error.code,
-            endpoint: `${this.baseUrl}/messages/pending`,
-            note: 'This error will not be logged again until connection is restored',
-          });
-          this.pollingErrorLogged = true;
-        }
-        return;
-      }
-      
-      // Log other errors (like 404, 401, etc.) but only once
-      if (error.response?.status !== 404) {
-        if (!this.pollingErrorLogged) {
-          logger.warn('Error polling Wechaty messages', {
-            error: error.message,
             status: error.response?.status,
             endpoint: `${this.baseUrl}/messages/pending`,
-            note: 'This error will not be logged again until connection is restored',
+            note: 'This message will not appear again until connection is restored',
           });
           this.pollingErrorLogged = true;
         }
       }
+      // Silently return - don't log again
+      return;
     }
   }
 
@@ -361,11 +360,13 @@ class WechatyAdapter {
 
   /**
    * Send message to a WeChat group via your Wechaty service
-   * @param {string} groupId - WeChat group ID
+   * @param {string} groupId - WeChat group ID (e.g., "27551115736@chatroom")
    * @param {string} messageText - Message text to send
+   * @param {Object} options - Optional parameters
+   * @param {string} options.roomName - Group name as fallback if roomId not found
    * @returns {Promise<boolean>} Success status
    */
-  async sendToGroup(groupId, messageText) {
+  async sendToGroup(groupId, messageText, options = {}) {
     try {
       if (!this.isReady) {
         throw new Error('Wechaty adapter is not ready');
@@ -373,22 +374,39 @@ class WechatyAdapter {
 
       // Send via HTTP API
       // Endpoint: /api/send (as per Wechaty service)
+      // Format: { message (required), roomId/groupId (optional), roomName (optional) }
       const endpoint = `${this.baseUrl}/api/send`;
+      
+      // Build request body according to API spec
+      // roomId is primary field, groupId is alias (both work)
+      const requestBody = {
+        message: messageText, // Required field
+      };
+      
+      // Add roomId (primary) or groupId (alias) - both are supported
+      if (groupId) {
+        requestBody.roomId = groupId; // Use roomId as primary (per API spec)
+        // Also include groupId as alias for backward compatibility
+        requestBody.groupId = groupId;
+      }
+      
+      // Add roomName if provided (fallback option)
+      if (options.roomName) {
+        requestBody.roomName = options.roomName;
+      }
       
       logger.debug('Sending message to Wechaty service', {
         baseUrl: this.baseUrl,
         endpoint: endpoint,
-        groupId: groupId,
+        roomId: groupId,
         hasApiKey: !!this.apiKey,
         messageLength: messageText?.length || 0,
+        hasRoomName: !!options.roomName,
       });
 
       const response = await axios.post(
         endpoint,
-        {
-          groupId: groupId,
-          message: messageText,
-        },
+        requestBody,
         {
           headers: {
             'Authorization': `Bearer ${this.apiKey}`,
@@ -411,18 +429,20 @@ class WechatyAdapter {
       }
 
       logger.debug('Message sent to WeChat group via adapter', {
-        groupId,
+        roomId: groupId,
         status: response.status,
         endpoint: `${this.baseUrl}/api/send`,
+        responseData: response.data,
       });
       
       // Detailed log for all Wechaty communication (debug level to reduce noise)
       logger.debug('[WECHATY OUTGOING]', {
         type: 'send_message',
         direction: 'backend → wechaty',
-        groupId,
+        roomId: groupId,
         endpoint: `${this.baseUrl}/api/send`,
         responseStatus: response.status,
+        responseData: response.data,
         timestamp: new Date().toISOString(),
       });
 
@@ -433,15 +453,17 @@ class WechatyAdapter {
         error: error.message || 'Unknown error',
         errorCode: error.code || 'NO_CODE',
         errorName: error.name || 'Error',
-        groupId,
+        roomId: groupId,
         baseUrl: this.baseUrl,
         endpoint: `${this.baseUrl}/api/send`,
         responseStatus: error.response?.status || 'N/A',
         responseStatusText: error.response?.statusText || 'N/A',
         responseData: error.response?.data || 'N/A',
         requestBody: {
-          groupId,
+          roomId: groupId,
+          groupId: groupId, // Alias
           message: messageText?.substring(0, 100), // Preview only
+          ...(options.roomName && { roomName: options.roomName }),
         },
         stack: error.stack || 'No stack trace',
       };

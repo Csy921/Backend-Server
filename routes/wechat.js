@@ -225,11 +225,18 @@ async function forwardMessageToWhatsAppGroup(message) {
     }
 
     // Check if message has any content to forward
-    const hasContent = !!(message.message || message.text || message.content || message.payload);
+    // Support all Wechaty message formats
+    const hasContent = !!(
+      message.text ||           // New Wechaty format (preferred)
+      message.message ||        // Old format
+      message.content ||        // Fallback
+      message.payload ||         // Fallback
+      (message.message && message.message.conversation)  // Nested format
+    );
     if (!hasContent) {
-      logger.warn('WeChat message has no content to forward', {
+      logger.debug('WeChat message has no content to forward', {
         messageKeys: Object.keys(message || {}),
-        body: message,
+        messageType: typeof message,
       });
       return;
     }
