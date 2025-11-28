@@ -395,6 +395,16 @@ class WechatyAdapter {
         requestBody.roomName = options.roomName;
       }
       
+      // Validate message before sending
+      if (!messageText || typeof messageText !== 'string' || messageText.trim().length === 0) {
+        logger.error('Cannot send empty message to WeChat', {
+          roomId: groupId,
+          messageType: typeof messageText,
+          messageLength: messageText?.length || 0,
+        });
+        return false;
+      }
+
       logger.debug('Sending message to Wechaty service', {
         baseUrl: this.baseUrl,
         endpoint: endpoint,
@@ -402,6 +412,10 @@ class WechatyAdapter {
         hasApiKey: !!this.apiKey,
         messageLength: messageText?.length || 0,
         hasRoomName: !!options.roomName,
+        requestBody: {
+          ...requestBody,
+          message: messageText.substring(0, 50) + (messageText.length > 50 ? '...' : ''), // Preview
+        },
       });
 
       const response = await axios.post(
@@ -419,12 +433,42 @@ class WechatyAdapter {
       
       // Check if response indicates an error
       if (response.status < 200 || response.status >= 300) {
-        logger.error('Wechaty service returned error status', {
-          status: response.status,
+        // Include status and error details in the message for better visibility
+        const errorMsg = response.data?.error || response.data?.message || 'Unknown error';
+        const statusCode = response.status;
+        
+        logger.error(`Wechaty service returned error status ${statusCode}: ${errorMsg}`, {
+          status: statusCode,
           statusText: response.statusText,
-          data: response.data,
+          error: errorMsg,
+          responseData: response.data,
           endpoint: endpoint,
+          requestBody: {
+            roomId: groupId,
+            messageLength: messageText?.length || 0,
+          },
         });
+        
+        // Log specific error types for common issues
+        if (statusCode === 400) {
+          logger.error('Bad Request - Check message format and required fields', {
+            hint: 'Ensure "message" field is provided and valid',
+          });
+        } else if (statusCode === 401) {
+          logger.error('Unauthorized - Check WECHATY_API_KEY is correct', {
+            hasApiKey: !!this.apiKey,
+          });
+        } else if (statusCode === 404) {
+          logger.error('Room not found - Check if roomId exists and bot is in the group', {
+            roomId: groupId,
+            hint: response.data?.hint || 'Make sure the bot is in the group and the roomId is correct',
+          });
+        } else if (statusCode === 503) {
+          logger.error('Service unavailable - Bot may not be logged in yet', {
+            hint: 'Wait for the bot to connect to WeChat',
+          });
+        }
+        
         return false;
       }
 
