@@ -87,46 +87,25 @@ function formatMessageWithMetadata(message) {
   const chat = message.chat || {};
   const groupName = chat.groupName || message.groupName || message.roomName || 'Unknown Group';
 
-  // Extract and format timestamp
+  // Extract and format timestamp in ISO format
   let formattedTime = '';
   if (message.timestamp) {
     try {
       const timestamp = new Date(message.timestamp);
-      formattedTime = timestamp.toLocaleString('en-US', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false,
-      });
+      formattedTime = timestamp.toISOString();
     } catch (e) {
-      formattedTime = new Date().toLocaleString('en-US', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false,
-      });
+      formattedTime = new Date().toISOString();
     }
   } else {
-    formattedTime = new Date().toLocaleString('en-US', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    });
+    formattedTime = new Date().toISOString();
   }
 
-  // Format: [Time] Group: GroupName | Sender: SenderName
+  // Format: [WeChat → WhatsApp]
+  // From: 
+  // Group: 
+  // Time: 2025-11-27T08:27:22.208Z
   // Message text
-  return `[${formattedTime}] Group: ${groupName} | Sender: ${senderName}\n${messageText}`;
+  return `[WeChat → WhatsApp]\n\nFrom: ${senderName}\nGroup: ${groupName}\nTime: ${formattedTime}\n\n${messageText}`;
 }
 
 /**
