@@ -103,18 +103,41 @@ class WechatyAdapter {
 
   /**
    * Register webhook with your Wechaty service
-   * Modify this to match your service's webhook registration API
+   * 
+   * Request Format (Format 1 - Backend's format):
+   * {
+   *   "url": "https://backend-server-6wmd.onrender.com/webhook/wechat/webhook",
+   *   "events": ["message", "group_message"]
+   * }
+   * 
+   * Alternative Format (Format 2):
+   * {
+   *   "webhookUrl": "https://backend-server-6wmd.onrender.com/webhook/wechat/webhook"
+   * }
+   * 
+   * Expected Response:
+   * {
+   *   "success": true,
+   *   "message": "Webhook registered successfully",
+   *   "webhookUrl": "...",
+   *   "url": "...",
+   *   "events": ["message", "group_message"],
+   *   "note": "Messages will be sent to this webhook URL"
+   * }
    */
   async registerWebhook() {
     try {
       const webhookUrl = process.env.WEBHOOK_URL || 'http://localhost:3000/webhook/wechat/webhook';
       
+      // Format 1: Backend's format (url + events)
+      const requestBody = {
+        url: webhookUrl,
+        events: ['message', 'group_message'],
+      };
+      
       const response = await axios.post(
         `${this.baseUrl}/webhook/register`,
-        {
-          url: webhookUrl,
-          events: ['message', 'group_message'],
-        },
+        requestBody,
         {
           headers: {
             'Authorization': `Bearer ${this.apiKey}`,
@@ -124,9 +147,14 @@ class WechatyAdapter {
         }
       );
 
+      // Log successful registration with response details
       logger.info('Webhook registered with Wechaty service', {
         webhookUrl,
         status: response.status,
+        responseData: response.data,
+        success: response.data?.success,
+        registeredUrl: response.data?.webhookUrl || response.data?.url,
+        events: response.data?.events,
       });
       
       // Detailed log for webhook registration
@@ -134,12 +162,9 @@ class WechatyAdapter {
         type: 'webhook_registration',
         direction: 'backend → wechaty',
         endpoint: `${this.baseUrl}/webhook/register`,
-        requestBody: {
-          url: webhookUrl,
-          events: ['message', 'group_message'],
-        },
+        requestBody: requestBody, // Format 1: { url, events }
         responseStatus: response.status,
-        responseData: response.data,
+        responseData: response.data, // Expected: { success, message, webhookUrl, url, events, note }
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
@@ -373,29 +398,33 @@ class WechatyAdapter {
       }
 
       // Send via HTTP API
-      // Endpoint: /api/send (as per Wechaty service)
-      // Format: { message (required), roomId/groupId (optional), roomName (optional) }
-      const endpoint = `${this.baseUrl}/api/send`;
+      // Endpoint: POST /api/send (as per Wechaty service API spec)
+      // URL: https://3001.share.zrok.io/api/send (via zrok tunnel)
+      // 
+      // Wechaty Service Processing Flow:
+      // 1. Receives POST request at /api/send
+      // 2. Validates bot is logged in
+      // 3. Parses: { contactId, message, roomId, contactName, roomName, groupId }
+      // 4. Validates: message exists and is not empty
+      // 5. Determines target: roomId || groupId || defaultTargetRoomId
+      // 6. Finds room and sends message
+      // 7. Returns: { success: true, message: "...", roomId, roomName }
+      //
+      // Expected Request Format:
+      // {
+      //   "message": "string (required)",
+      //   "roomId": "string (optional, primary)",
+      //   "groupId": "string (optional, alias for roomId)",
+      //   "roomName": "string (optional, fallback)",
+      //   "contactId": "string (optional, for private messages)",
+      //   "contactName": "string (optional, for private messages)"
+      // }
+      // Ensure baseUrl doesn't have trailing slash
+      const baseUrlClean = this.baseUrl.replace(/\/$/, '');
+      const endpoint = `${baseUrlClean}/api/send`;
       
-      // Build request body according to API spec
-      // roomId is primary field, groupId is alias (both work)
-      const requestBody = {
-        message: messageText, // Required field
-      };
-      
-      // Add roomId (primary) or groupId (alias) - both are supported
-      if (groupId) {
-        requestBody.roomId = groupId; // Use roomId as primary (per API spec)
-        // Also include groupId as alias for backward compatibility
-        requestBody.groupId = groupId;
-      }
-      
-      // Add roomName if provided (fallback option)
-      if (options.roomName) {
-        requestBody.roomName = options.roomName;
-      }
-      
-      // Validate message before sending
+      // Validate message before building request
+      // Matches Wechaty validation: if (!message || !message.trim())
       if (!messageText || typeof messageText !== 'string' || messageText.trim().length === 0) {
         logger.error('Cannot send empty message to WeChat', {
           roomId: groupId,
@@ -404,18 +433,42 @@ class WechatyAdapter {
         });
         return false;
       }
+      
+      // Build request body according to Wechaty API spec:
+      // Required: message (string)
+      // Optional: roomId (primary), groupId (alias), roomName (fallback)
+      // Wechaty parses: const { contactId, message, roomId, contactName, roomName, groupId } = data;
+      // Wechaty determines target: const targetRoomId = roomId || groupId || BACKEND_CONFIG.defaultTargetRoomId;
+      const requestBody = {
+        message: messageText, // Required field - validated by Wechaty: if (!message || !message.trim())
+      };
+      
+      // Add roomId (primary field per API spec)
+      // Wechaty uses: roomId || groupId || defaultTargetRoomId
+      if (groupId) {
+        requestBody.roomId = groupId; // Primary field
+        // Also include groupId as alias (both work per API spec)
+        requestBody.groupId = groupId; // Alias - Wechaty accepts both
+      }
+      
+      // Add roomName if provided (fallback option per API spec)
+      if (options.roomName) {
+        requestBody.roomName = options.roomName;
+      }
 
-      logger.debug('Sending message to Wechaty service', {
-        baseUrl: this.baseUrl,
+      // Log the exact request being sent (for verification)
+      logger.info('Sending message to Wechaty service', {
         endpoint: endpoint,
-        roomId: groupId,
-        hasApiKey: !!this.apiKey,
-        messageLength: messageText?.length || 0,
-        hasRoomName: !!options.roomName,
-        requestBody: {
-          ...requestBody,
-          message: messageText.substring(0, 50) + (messageText.length > 50 ? '...' : ''), // Preview
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey ? '***' + this.apiKey.slice(-4) : 'NOT_SET'}`,
         },
+        requestBody: JSON.parse(JSON.stringify(requestBody)), // Deep copy to show exact format
+        messageLength: messageText.length,
+        hasRoomId: !!requestBody.roomId,
+        hasGroupId: !!requestBody.groupId,
+        hasRoomName: !!requestBody.roomName,
       });
 
       const response = await axios.post(
@@ -475,7 +528,7 @@ class WechatyAdapter {
       logger.debug('Message sent to WeChat group via adapter', {
         roomId: groupId,
         status: response.status,
-        endpoint: `${this.baseUrl}/api/send`,
+        endpoint: endpoint,
         responseData: response.data,
       });
       
@@ -484,7 +537,8 @@ class WechatyAdapter {
         type: 'send_message',
         direction: 'backend → wechaty',
         roomId: groupId,
-        endpoint: `${this.baseUrl}/api/send`,
+        endpoint: endpoint,
+        requestBody: requestBody, // Show exact request sent
         responseStatus: response.status,
         responseData: response.data,
         timestamp: new Date().toISOString(),
