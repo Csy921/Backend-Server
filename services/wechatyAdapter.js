@@ -168,19 +168,61 @@ class WechatyAdapter {
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
-      logger.warn('Webhook registration failed, will use polling instead', {
+      // Extract detailed error information
+      const errorDetails = {
         error: error.message,
-      });
+        errorCode: error.code,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        responseData: error.response?.data,
+        responseHeaders: error.response?.headers,
+        webhookUrl: webhookUrl,
+        endpoint: `${this.baseUrl}/webhook/register`,
+      };
       
-      // Log failed webhook registration
+      logger.warn('Webhook registration failed, will use polling instead', errorDetails);
+      
+      // Log failed webhook registration with full details
       logger.warn('[WECHATY OUTGOING FAILED]', {
         type: 'webhook_registration_failed',
         direction: 'backend → wechaty',
         endpoint: `${this.baseUrl}/webhook/register`,
         error: error.message,
-        errorDetails: error.response?.data || error.stack,
+        errorCode: error.code,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        responseData: error.response?.data,
+        requestBody: {
+          url: webhookUrl,
+          events: ['message', 'group_message'],
+        },
         timestamp: new Date().toISOString(),
       });
+      
+      // Provide specific hints based on error type
+      if (error.code === 'ECONNREFUSED') {
+        logger.warn('Webhook registration: Connection refused - Wechaty service may not be running', {
+          baseUrl: this.baseUrl,
+        });
+      } else if (error.code === 'ETIMEDOUT') {
+        logger.warn('Webhook registration: Timeout - Wechaty service may be slow to respond', {
+          baseUrl: this.baseUrl,
+          timeout: '30 seconds',
+        });
+      } else if (error.response?.status === 401) {
+        logger.warn('Webhook registration: Unauthorized - Check WECHATY_API_KEY', {
+          hasApiKey: !!this.apiKey,
+        });
+      } else if (error.response?.status === 404) {
+        logger.warn('Webhook registration: Endpoint not found - Check if /webhook/register exists', {
+          endpoint: `${this.baseUrl}/webhook/register`,
+        });
+      } else if (error.response?.status >= 500) {
+        logger.warn('Webhook registration: Server error - Check Wechaty service logs', {
+          status: error.response?.status,
+          responseData: error.response?.data,
+        });
+      }
       
       this.startPolling();
     }
@@ -490,17 +532,36 @@ class WechatyAdapter {
         const errorMsg = response.data?.error || response.data?.message || 'Unknown error';
         const statusCode = response.status;
         
-        logger.error(`Wechaty service returned error status ${statusCode}: ${errorMsg}`, {
+        // Extract full error details
+        const fullErrorDetails = {
           status: statusCode,
           statusText: response.statusText,
           error: errorMsg,
           responseData: response.data,
+          responseHeaders: response.headers,
           endpoint: endpoint,
           requestBody: {
-            roomId: groupId,
+            message: messageText?.substring(0, 100) + (messageText.length > 100 ? '...' : ''),
             messageLength: messageText?.length || 0,
+            roomId: requestBody.roomId,
+            groupId: requestBody.groupId,
+            hasRoomName: !!requestBody.roomName,
           },
-        });
+        };
+        
+        logger.error(`Wechaty service returned error status ${statusCode}: ${errorMsg}`, fullErrorDetails);
+        
+        // For 500 errors, log the full response for debugging
+        if (statusCode === 500) {
+          logger.error('Full 500 error response details:', {
+            status: statusCode,
+            statusText: response.statusText,
+            headers: response.headers,
+            data: response.data,
+            dataString: JSON.stringify(response.data),
+            requestSent: requestBody,
+          });
+        }
         
         // Log specific error types for common issues
         if (statusCode === 400) {
@@ -515,6 +576,23 @@ class WechatyAdapter {
           logger.error('Room not found - Check if roomId exists and bot is in the group', {
             roomId: groupId,
             hint: response.data?.hint || 'Make sure the bot is in the group and the roomId is correct',
+          });
+        } else if (statusCode === 500) {
+          logger.error('Internal Server Error - Wechaty service encountered an error', {
+            hint: 'This is a server-side error. Check Wechaty service logs for details.',
+            possibleCauses: [
+              'Bot may have lost connection to WeChat',
+              'WeChat API may be temporarily unavailable',
+              'Room lookup may have failed',
+              'Message sending may have encountered an error'
+            ],
+            responseData: response.data,
+            requestBody: {
+              messageLength: messageText?.length || 0,
+              hasRoomId: !!requestBody.roomId,
+              hasGroupId: !!requestBody.groupId,
+              roomId: requestBody.roomId,
+            },
           });
         } else if (statusCode === 503) {
           logger.error('Service unavailable - Bot may not be logged in yet', {
