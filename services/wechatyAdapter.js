@@ -126,9 +126,18 @@ class WechatyAdapter {
    * }
    */
   async registerWebhook() {
+    // Define webhookUrl at function scope to ensure it's always available
+    const webhookUrl = process.env.WEBHOOK_URL || 'http://localhost:3000/webhook/wechat/webhook';
+    
+    // Validate webhookUrl is set
+    if (!webhookUrl || webhookUrl === 'http://localhost:3000/webhook/wechat/webhook') {
+      logger.warn('WEBHOOK_URL not set, using default localhost URL. This may not work in production.', {
+        webhookUrl: webhookUrl,
+        envVar: process.env.WEBHOOK_URL,
+      });
+    }
+    
     try {
-      const webhookUrl = process.env.WEBHOOK_URL || 'http://localhost:3000/webhook/wechat/webhook';
-      
       // Format 1: Backend's format (url + events)
       const requestBody = {
         url: webhookUrl,
@@ -176,7 +185,7 @@ class WechatyAdapter {
         statusText: error.response?.statusText,
         responseData: error.response?.data,
         responseHeaders: error.response?.headers,
-        webhookUrl: webhookUrl,
+        webhookUrl: webhookUrl, // Now always defined
         endpoint: `${this.baseUrl}/webhook/register`,
       };
       
@@ -193,7 +202,7 @@ class WechatyAdapter {
         statusText: error.response?.statusText,
         responseData: error.response?.data,
         requestBody: {
-          url: webhookUrl,
+          url: webhookUrl, // Now always defined
           events: ['message', 'group_message'],
         },
         timestamp: new Date().toISOString(),
