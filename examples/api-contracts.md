@@ -38,40 +38,109 @@ This document specifies the expected API contracts for external WhatsApp, Wechat
 
 ## Wechaty Service API
 
-### Send Message to Group
+Base URL: `https://3001.share.zrok.io`
 
-**Endpoint:** `POST /send`
+### Public Endpoints (No Authentication)
+
+#### Health Check
+
+**Endpoint:** `GET /health`
+
+**Response:**
+```json
+{
+  "status": "online",
+  "botLoggedIn": true,
+  "service": "wechaty-xp-bot",
+  "timestamp": "2025-12-02T14:30:00.000+08:00"
+}
+```
+
+### Protected Endpoints (Require API Key)
+
+All endpoints below require:
+```
+Authorization: Bearer 07a4161616db38e537faa58d73de461ac971fd036e6a89526a15b478ac288b28
+```
+
+#### Service Info
+
+**Endpoint:** `GET /`
+
+**Response:**
+```json
+{
+  "service": "Wechaty XP Bot HTTP API",
+  "status": "ready",
+  "botLoggedIn": true,
+  "endpoints": {
+    "health": "/health",
+    "sendMessage": "POST /api/send"
+  },
+  "timestamp": "2025-12-02T14:30:00.000+08:00"
+}
+```
+
+#### Send Message to WeChat
+
+**Endpoint:** `POST /api/send`
 
 **Request:**
 ```json
 {
-  "groupId": "wxid_abc123",
-  "message": "Message text here"
+  "message": "Hello from WhatsApp",
+  "roomId": "27551115736@chatroom",
+  "groupId": "27551115736@chatroom",
+  "roomName": "Supplier Group 1"
 }
-```
-
-**Headers:**
-```
-Authorization: Bearer YOUR_API_KEY
-Content-Type: application/json
 ```
 
 **Response:**
 ```json
 {
   "success": true,
-  "messageId": "msg_123456"
+  "message": "Message sent to group",
+  "roomId": "27551115736@chatroom",
+  "roomName": "Supplier Group 1"
 }
 ```
 
-### Register Webhook (Optional)
+#### Status Check
 
-**Endpoint:** `POST /webhook/register`
+**Endpoint:** `GET /api/status`
+
+**Response:**
+```json
+{
+  "success": true,
+  "status": "online",
+  "botLoggedIn": true,
+  "ready": true,
+  "service": "wechaty-xp-bot",
+  "wechatyServiceUrl": "http://localhost:3001",
+  "webhookUrl": "https://backend-server-6wmd.onrender.com/webhook/wechat/webhook",
+  "registeredWebhook": {
+    "url": "https://backend-server-6wmd.onrender.com/webhook/wechat/webhook",
+    "events": ["message", "group_message"]
+  },
+  "endpoints": {
+    "send": "/api/send",
+    "status": "/api/status",
+    "health": "/health",
+    "webhookRegister": "/webhook/register"
+  },
+  "timestamp": "2025-12-02T14:30:00.000+08:00"
+}
+```
+
+#### Register Webhook
+
+**Endpoint:** `POST /webhook/register` or `POST /api/webhook/register`
 
 **Request:**
 ```json
 {
-  "url": "http://localhost:3000/webhook/wechat",
+  "webhookUrl": "https://backend-server-6wmd.onrender.com/webhook/wechat/webhook",
   "events": ["message", "group_message"]
 }
 ```
@@ -80,50 +149,42 @@ Content-Type: application/json
 ```json
 {
   "success": true,
-  "webhookId": "webhook_123"
+  "message": "Webhook registered successfully",
+  "webhookUrl": "https://backend-server-6wmd.onrender.com/webhook/wechat/webhook",
+  "events": ["message", "group_message"]
 }
 ```
 
-### Webhook Callback (Your service calls this backend)
+#### Poll Messages (Deprecated)
 
-**Endpoint:** `POST http://your-backend/webhook/wechat`
+**Endpoint:** `GET /api/messages` or `GET /api/poll`
+
+**Note:** Messages are now delivered via webhook. This endpoint is kept for backward compatibility.
+
+**Response:**
+```json
+{
+  "success": true,
+  "messages": [],
+  "message": "Messages are delivered via webhook. Use POST /api/send to send messages.",
+  "botLoggedIn": true,
+  "timestamp": "2025-12-02T14:30:00.000+08:00"
+}
+```
+
+### Webhook Callback (Wechaty calls your backend)
+
+**Endpoint:** `POST https://backend-server-6wmd.onrender.com/webhook/wechat/webhook`
 
 **Request Body:**
 ```json
 {
-  "groupId": "wxid_abc123",
-  "from": "Contact Name",
+  "roomId": "27551115736@chatroom",
+  "roomTopic": "Supplier Group 1",
+  "talkerName": "John Doe",
   "text": "Message text",
-  "timestamp": "2024-01-01T00:00:00Z"
-}
-```
-
-### Poll Messages (Alternative to webhook)
-
-**Endpoint:** `GET /messages/pending`
-
-**Response:**
-```json
-{
-  "messages": [
-    {
-      "groupId": "wxid_abc123",
-      "from": "Contact Name",
-      "text": "Message text",
-      "timestamp": "2024-01-01T00:00:00Z"
-    }
-  ]
-}
-```
-
-### Health Check
-
-**Endpoint:** `GET /health`
-
-**Response:**
-```json
-{
-  "status": "ok"
+  "timestamp": "2025-12-02T14:30:00.000+08:00",
+  "isGroup": true
 }
 ```
 

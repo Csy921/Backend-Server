@@ -58,14 +58,18 @@ class WechatyAdapter {
 
   /**
    * Test connection to Wechaty service
+   * Available endpoints:
+   * - GET /health (public, no auth)
+   * - GET / (protected, returns service info)
+   * - GET /api/status (protected, detailed status)
    */
   async testConnection() {
     try {
-      // Try to reach the health endpoint or root
+      // Try to reach the health endpoint (public, no auth required)
       const testUrls = [
         `${this.baseUrl}/health`,
         `${this.baseUrl}/`,
-        `${this.baseUrl}/api/send`, // Try the actual endpoint (will fail but confirms service is reachable)
+        `${this.baseUrl}/api/status`,
       ];
 
       for (const url of testUrls) {
@@ -102,27 +106,25 @@ class WechatyAdapter {
   }
 
   /**
-   * Register webhook with your Wechaty service
+   * Register webhook with Wechaty service
    * 
-   * Request Format (Format 1 - Backend's format):
+   * Endpoint: POST /webhook/register (or POST /api/webhook/register)
+   * Authentication: Required (Bearer token)
+   * 
+   * Request Format:
+   * POST https://3001.share.zrok.io/webhook/register
+   * Authorization: Bearer 07a4161616db38e537faa58d73de461ac971fd036e6a89526a15b478ac288b28
    * {
-   *   "url": "https://backend-server-6wmd.onrender.com/webhook/wechat/webhook",
+   *   "webhookUrl": "https://backend-server-6wmd.onrender.com/webhook/wechat/webhook",
    *   "events": ["message", "group_message"]
    * }
    * 
-   * Alternative Format (Format 2):
-   * {
-   *   "webhookUrl": "https://backend-server-6wmd.onrender.com/webhook/wechat/webhook"
-   * }
-   * 
-   * Expected Response:
+   * Response:
    * {
    *   "success": true,
    *   "message": "Webhook registered successfully",
-   *   "webhookUrl": "...",
-   *   "url": "...",
-   *   "events": ["message", "group_message"],
-   *   "note": "Messages will be sent to this webhook URL"
+   *   "webhookUrl": "https://backend-server-6wmd.onrender.com/webhook/wechat/webhook",
+   *   "events": ["message", "group_message"]
    * }
    */
   async registerWebhook() {
@@ -138,9 +140,9 @@ class WechatyAdapter {
     }
     
     try {
-      // Format 1: Backend's format (url + events)
+      // Wechaty service expects webhookUrl format (as per architecture documentation)
       const requestBody = {
-        url: webhookUrl,
+        webhookUrl: webhookUrl,
         events: ['message', 'group_message'],
       };
       
@@ -162,7 +164,7 @@ class WechatyAdapter {
         status: response.status,
         responseData: response.data,
         success: response.data?.success,
-        registeredUrl: response.data?.webhookUrl || response.data?.url,
+        registeredUrl: response.data?.webhookUrl,
         events: response.data?.events,
       });
       
@@ -171,9 +173,9 @@ class WechatyAdapter {
         type: 'webhook_registration',
         direction: 'backend → wechaty',
         endpoint: `${this.baseUrl}/webhook/register`,
-        requestBody: requestBody, // Format 1: { url, events }
+        requestBody: requestBody, // Format: { webhookUrl, events }
         responseStatus: response.status,
-        responseData: response.data, // Expected: { success, message, webhookUrl, url, events, note }
+        responseData: response.data, // Expected: { success, message, webhookUrl, events, note }
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
@@ -202,7 +204,7 @@ class WechatyAdapter {
         statusText: error.response?.statusText,
         responseData: error.response?.data,
         requestBody: {
-          url: webhookUrl, // Now always defined
+          webhookUrl: webhookUrl, // Now always defined
           events: ['message', 'group_message'],
         },
         timestamp: new Date().toISOString(),
@@ -261,11 +263,13 @@ class WechatyAdapter {
 
   /**
    * Poll for new messages from Wechaty service
+   * Note: This is deprecated - messages are now sent via webhook
+   * Endpoint: GET /api/messages or GET /api/poll
    */
   async pollMessages() {
     try {
       const response = await axios.get(
-        `${this.baseUrl}/messages/pending`,
+        `${this.baseUrl}/api/messages`,
         {
           headers: {
             'Authorization': `Bearer ${this.apiKey}`,
@@ -449,26 +453,24 @@ class WechatyAdapter {
       }
 
       // Send via HTTP API
-      // Endpoint: POST /api/send (as per Wechaty service API spec)
+      // Endpoint: POST /api/send
       // URL: https://3001.share.zrok.io/api/send (via zrok tunnel)
+      // Authentication: Required (Bearer token)
       // 
-      // Wechaty Service Processing Flow:
-      // 1. Receives POST request at /api/send
-      // 2. Validates bot is logged in
-      // 3. Parses: { contactId, message, roomId, contactName, roomName, groupId }
-      // 4. Validates: message exists and is not empty
-      // 5. Determines target: roomId || groupId || defaultTargetRoomId
-      // 6. Finds room and sends message
-      // 7. Returns: { success: true, message: "...", roomId, roomName }
-      //
-      // Expected Request Format:
+      // Request Format:
       // {
       //   "message": "string (required)",
-      //   "roomId": "string (optional, primary)",
+      //   "roomId": "string (optional, primary identifier)",
       //   "groupId": "string (optional, alias for roomId)",
-      //   "roomName": "string (optional, fallback)",
-      //   "contactId": "string (optional, for private messages)",
-      //   "contactName": "string (optional, for private messages)"
+      //   "roomName": "string (optional, fallback if roomId not found)"
+      // }
+      //
+      // Response:
+      // {
+      //   "success": true,
+      //   "message": "Message sent to group",
+      //   "roomId": "27551115736@chatroom",
+      //   "roomName": "Supplier Group 1"
       // }
       // Ensure baseUrl doesn't have trailing slash
       const baseUrlClean = this.baseUrl.replace(/\/$/, '');
@@ -508,8 +510,26 @@ class WechatyAdapter {
       }
 
       // Log the exact request being sent (for verification)
+      // This log appears BEFORE the request is sent, so you can see exactly what will be sent
+      logger.info('═══════════════════════════════════════════════════════════');
+      logger.info('📤 SENDING REQUEST TO WECHATY SERVICE');
+      logger.info('═══════════════════════════════════════════════════════════');
+      logger.info('📍 Full URL:', endpoint);
+      logger.info('🔗 Base URL:', this.baseUrl);
+      logger.info('📋 Method: POST');
+      logger.info('📦 Request Body:', JSON.stringify(requestBody, null, 2));
+      logger.info('📏 Message Length:', messageText.length);
+      logger.info('🔑 Has API Key:', !!this.apiKey);
+      logger.info('🏠 Has RoomId:', !!requestBody.roomId, requestBody.roomId || 'N/A');
+      logger.info('👥 Has GroupId:', !!requestBody.groupId, requestBody.groupId || 'N/A');
+      logger.info('📝 Has RoomName:', !!requestBody.roomName, requestBody.roomName || 'N/A');
+      logger.info('═══════════════════════════════════════════════════════════');
+      
+      // Also log in structured format for parsing
       logger.info('Sending message to Wechaty service', {
-        endpoint: endpoint,
+        fullUrl: endpoint,
+        baseUrl: this.baseUrl,
+        endpoint: '/api/send',
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -517,11 +537,17 @@ class WechatyAdapter {
         },
         requestBody: JSON.parse(JSON.stringify(requestBody)), // Deep copy to show exact format
         messageLength: messageText.length,
+        messagePreview: messageText.substring(0, 100) + (messageText.length > 100 ? '...' : ''),
         hasRoomId: !!requestBody.roomId,
         hasGroupId: !!requestBody.groupId,
         hasRoomName: !!requestBody.roomName,
       });
 
+      // Log immediately before sending request
+      logger.info('🚀 EXECUTING HTTP POST REQUEST NOW...');
+      logger.info('   URL:', endpoint);
+      logger.info('   Body:', JSON.stringify(requestBody));
+      
       const response = await axios.post(
         endpoint,
         requestBody,
@@ -535,8 +561,18 @@ class WechatyAdapter {
         }
       );
       
+      logger.info('✅ REQUEST COMPLETED - Status:', response.status);
+      
       // Check if response indicates an error
       if (response.status < 200 || response.status >= 300) {
+        logger.error('═══════════════════════════════════════════════════════════');
+        logger.error('❌ ERROR RESPONSE RECEIVED');
+        logger.error('═══════════════════════════════════════════════════════════');
+        logger.error('📍 Request URL:', endpoint);
+        logger.error('📦 Request Body Sent:', JSON.stringify(requestBody, null, 2));
+        logger.error('📊 Response Status:', response.status, response.statusText);
+        logger.error('📄 Response Data:', JSON.stringify(response.data, null, 2));
+        logger.error('═══════════════════════════════════════════════════════════');
         // Include status and error details in the message for better visibility
         const errorMsg = response.data?.error || response.data?.message || 'Unknown error';
         const statusCode = response.status;
