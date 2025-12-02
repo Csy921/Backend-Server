@@ -291,9 +291,9 @@ async function forwardMessageToWeChatGroup(message) {
       adapterReady: wechatyAdapter.isReady,
     });
 
-    // Initialize adapter if not ready
+    // Initialize adapter if not ready (fallback - should already be initialized at startup)
     if (!wechatyAdapter.isReady) {
-      logger.info('Wechaty adapter not ready, initializing...');
+      logger.warn('Wechaty adapter not ready, initializing now (should have been initialized at startup)...');
       try {
         await wechatyAdapter.initialize();
         logger.info('Wechaty adapter initialized successfully');

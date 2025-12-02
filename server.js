@@ -58,6 +58,22 @@ async function initializeServices() {
       }
     } else {
       logger.info('USE_EXTERNAL_WECHATY=true — skipping internal Wechaty startup (using external service)');
+      
+      // Initialize Wechaty adapter for external service
+      // This registers the webhook so WeChat messages can be received immediately
+      try {
+        const getWechatyAdapter = require('./services/wechatyAdapter');
+        const wechatyAdapter = getWechatyAdapter();
+        await wechatyAdapter.initialize();
+        logger.info('Wechaty adapter initialized - webhook registered');
+      } catch (error) {
+        logger.error('Failed to initialize Wechaty adapter', {
+          error: error.message,
+          note: 'Webhook registration failed. WeChat messages may not be received until adapter is initialized.',
+        });
+        // Don't exit - allow server to start even if webhook registration fails
+        // The adapter will retry when first used
+      }
     }
 
     logger.info('Services initialized successfully');
