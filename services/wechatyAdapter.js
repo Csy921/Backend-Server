@@ -17,16 +17,11 @@ class WechatyAdapter {
     this.isReady = false;
     this.messageHandlers = new Map(); // sessionId -> handler function
     this.groupToSessionMap = new Map(); // groupId -> sessionId
-    this.pollingInterval = null;
-    this.pollingErrorLogged = false; // Track if we've logged polling errors to avoid spam
   }
 
   /**
    * Initialize connection to external Wechaty service
-   * This could be:
-   * 1. WebSocket connection for real-time messages
-   * 2. HTTP polling setup
-   * 3. Webhook registration
+   * Registers webhook for receiving WeChat messages
    */
   async initialize() {
     try {
@@ -39,14 +34,8 @@ class WechatyAdapter {
       // Test connection first
       await this.testConnection();
 
-      // Option 1: Register webhook with your Wechaty service
+      // Register webhook with Wechaty service
       await this.registerWebhook();
-
-      // Option 2: Start polling for messages (if webhook not available)
-      // this.startPolling();
-
-      // Option 3: Connect via WebSocket (if your service supports it)
-      // await this.connectWebSocket();
 
       this.isReady = true;
       logger.info('Wechaty adapter initialized');
@@ -191,10 +180,10 @@ class WechatyAdapter {
         endpoint: `${this.baseUrl}/webhook/register`,
       };
       
-      logger.warn('Webhook registration failed, will use polling instead', errorDetails);
+      logger.error('Webhook registration failed', errorDetails);
       
       // Log failed webhook registration with full details
-      logger.warn('[WECHATY OUTGOING FAILED]', {
+      logger.error('[WECHATY OUTGOING FAILED]', {
         type: 'webhook_registration_failed',
         direction: 'backend → wechaty',
         endpoint: `${this.baseUrl}/webhook/register`,
@@ -212,127 +201,37 @@ class WechatyAdapter {
       
       // Provide specific hints based on error type
       if (error.code === 'ECONNREFUSED') {
-        logger.warn('Webhook registration: Connection refused - Wechaty service may not be running', {
+        logger.error('Webhook registration: Connection refused - Wechaty service may not be running', {
           baseUrl: this.baseUrl,
         });
       } else if (error.code === 'ETIMEDOUT') {
-        logger.warn('Webhook registration: Timeout - Wechaty service may be slow to respond', {
+        logger.error('Webhook registration: Timeout - Wechaty service may be slow to respond', {
           baseUrl: this.baseUrl,
           timeout: '30 seconds',
         });
       } else if (error.response?.status === 401) {
-        logger.warn('Webhook registration: Unauthorized - Check WECHATY_API_KEY', {
+        logger.error('Webhook registration: Unauthorized - Check WECHATY_API_KEY', {
           hasApiKey: !!this.apiKey,
         });
       } else if (error.response?.status === 404) {
-        logger.warn('Webhook registration: Endpoint not found - Check if /webhook/register exists', {
+        logger.error('Webhook registration: Endpoint not found - Check if /webhook/register exists', {
           endpoint: `${this.baseUrl}/webhook/register`,
         });
       } else if (error.response?.status >= 500) {
-        logger.warn('Webhook registration: Server error - Check Wechaty service logs', {
+        logger.error('Webhook registration: Server error - Check Wechaty service logs', {
           status: error.response?.status,
           responseData: error.response?.data,
         });
       }
       
-      this.startPolling();
-    }
-  }
-
-  /**
-   * Start polling for messages from Wechaty service
-   * Use this if webhooks are not available
-   */
-  startPolling() {
-    if (this.pollingInterval) {
-      clearInterval(this.pollingInterval);
-    }
-
-    // Reset error flag when starting polling
-    this.pollingErrorLogged = false;
-
-    this.pollingInterval = setInterval(async () => {
-      await this.pollMessages();
-    }, 10000); // Poll every 10 seconds (reduced frequency to avoid spam)
-
-    logger.info('Started polling for Wechaty messages', {
-      serviceUrl: this.baseUrl,
-      note: 'Polling will be silent if service is not available',
-    });
-  }
-
-  /**
-   * Poll for new messages from Wechaty service
-   * Note: This is deprecated - messages are now sent via webhook
-   * Endpoint: GET /api/messages or GET /api/poll
-   */
-  async pollMessages() {
-    try {
-      const response = await axios.get(
-        `${this.baseUrl}/api/messages`,
-        {
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-          },
-          timeout: 3000, // 3 second timeout
-        }
-      );
-
-      // Reset error flag on successful poll
-      if (this.pollingErrorLogged) {
-        this.pollingErrorLogged = false;
-        logger.info('Wechaty polling connection restored', {
-          endpoint: `${this.baseUrl}/messages/pending`,
-        });
-      }
-
-      if (response.data && response.data.messages) {
-        logger.info('[WECHATY POLLING]', {
-          type: 'poll_response',
-          direction: 'wechaty → backend',
-          endpoint: `${this.baseUrl}/messages/pending`,
-          messageCount: response.data.messages.length,
-          messages: response.data.messages,
-          timestamp: new Date().toISOString(),
-        });
-        
-        for (const message of response.data.messages) {
-          await this.handleMessage(message);
-        }
-      }
-    } catch (error) {
-      // Silently handle connection errors (service might not be running yet)
-      // Only log once to avoid spam
-      if (!this.pollingErrorLogged) {
-        // Determine error type
-        const isConnectionError = error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT';
-        const is404 = error.response?.status === 404;
-        
-        // Only log if it's not a 404 (endpoint might not exist, that's ok)
-        if (!is404) {
-          // Use a message that doesn't contain "Error" to avoid ERROR source detection
-          const logMessage = isConnectionError 
-            ? 'Wechaty polling: Service unavailable, will retry silently'
-            : 'Wechaty polling: Request failed, will retry silently';
-          
-          logger.warn(logMessage, {
-            errorMsg: error.message, // Use errorMsg instead of error to avoid detection
-            errorCode: error.code,
-            status: error.response?.status,
-            endpoint: `${this.baseUrl}/messages/pending`,
-            note: 'This message will not appear again until connection is restored',
-          });
-          this.pollingErrorLogged = true;
-        }
-      }
-      // Silently return - don't log again
-      return;
+      // Throw error - webhook registration is required
+      throw new Error(`Webhook registration failed: ${error.message}`);
     }
   }
 
   /**
    * Handle incoming message from Wechaty service
-   * This is called by webhook endpoint or polling
+   * This is called by webhook endpoint
    * @param {Object} message - Message object from Wechaty service
    */
   async handleMessage(message) {
@@ -773,11 +672,6 @@ class WechatyAdapter {
    */
   async stop() {
     try {
-      if (this.pollingInterval) {
-        clearInterval(this.pollingInterval);
-        this.pollingInterval = null;
-      }
-
       // Optionally unregister webhook
       // await axios.delete(`${this.baseUrl}/webhook/register`, ...);
 
