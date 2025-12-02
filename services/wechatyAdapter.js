@@ -2,6 +2,11 @@
  * Wechaty Adapter Service
  * This adapter connects to your external Wechaty service
  * Modify this file to match your Wechaty service API
+ * 
+ * Authentication:
+ * - ALL endpoints except /health require API key
+ * - Format: Authorization: Bearer <API_KEY>
+ * - Set WECHATY_API_KEY environment variable
  */
 
 const axios = require('axios');
@@ -13,6 +18,8 @@ class WechatyAdapter {
     this.config = wechatyConfig;
     // Add your Wechaty service base URL here
     this.baseUrl = process.env.WECHATY_SERVICE_URL || 'http://localhost:3002';
+    // API key is required for all endpoints except /health
+    // Format: Authorization: Bearer <API_KEY>
     this.apiKey = process.env.WECHATY_API_KEY || '';
     this.isReady = false;
     this.messageHandlers = new Map(); // sessionId -> handler function
@@ -47,35 +54,89 @@ class WechatyAdapter {
 
   /**
    * Test connection to Wechaty service
+   * 
+   * Authentication:
+   * - ALL endpoints except /health require API key
+   * - Format: Authorization: Bearer <API_KEY>
+   * 
    * Available endpoints:
-   * - GET /health (public, no auth)
-   * - GET / (protected, returns service info)
-   * - GET /api/status (protected, detailed status)
+   * - GET /health (public, no auth required)
+   * - GET / (protected, requires API key)
+   * - GET /api/status (protected, requires API key)
    */
   async testConnection() {
     try {
-      // Try to reach the health endpoint (public, no auth required)
-      const testUrls = [
-        `${this.baseUrl}/health`,
-        `${this.baseUrl}/`,
-        `${this.baseUrl}/api/status`,
-      ];
-
-      for (const url of testUrls) {
-        try {
-          const response = await axios.get(url, {
-            timeout: 5000,
-            validateStatus: () => true, // Accept any status code
+      // First try health endpoint (public, no auth required)
+      try {
+        const healthResponse = await axios.get(`${this.baseUrl}/health`, {
+          timeout: 5000,
+          validateStatus: () => true,
+        });
+        
+        logger.info('Wechaty service connection test successful (health check)', {
+          url: `${this.baseUrl}/health`,
+          status: healthResponse.status,
+        });
+        
+        // If health check works, try protected endpoints with API key
+        if (this.apiKey) {
+          // Test /api/status (requires API key)
+          try {
+            const statusResponse = await axios.get(`${this.baseUrl}/api/status`, {
+              headers: {
+                'Authorization': `Bearer ${this.apiKey}`,
+              },
+              timeout: 5000,
+              validateStatus: () => true,
+            });
+            
+            if (statusResponse.status === 200) {
+              logger.info('Wechaty service status check successful', {
+                url: `${this.baseUrl}/api/status`,
+                status: statusResponse.status,
+                botLoggedIn: statusResponse.data?.botLoggedIn,
+              });
+              return true;
+            } else if (statusResponse.status === 401) {
+              logger.warn('Wechaty service status check failed - API key may be invalid', {
+                url: `${this.baseUrl}/api/status`,
+                status: statusResponse.status,
+              });
+            }
+          } catch (statusError) {
+            // Status check failed, but health check passed, so service is reachable
+            logger.debug('Status check failed, but health check passed', {
+              error: statusError.message,
+            });
+          }
+        } else {
+          logger.warn('WECHATY_API_KEY not set - cannot test protected endpoints', {
+            note: 'Health check passed, but /api/status requires API key',
           });
-          
-          logger.info('Wechaty service connection test successful', {
-            url,
-            status: response.status,
-          });
-          return true;
-        } catch (error) {
-          // Try next URL
-          continue;
+        }
+        
+        return true; // Health check passed, service is reachable
+      } catch (healthError) {
+        // Health check failed, try protected endpoints as fallback
+        if (this.apiKey) {
+          // Try /api/status with API key
+          try {
+            const statusResponse = await axios.get(`${this.baseUrl}/api/status`, {
+              headers: {
+                'Authorization': `Bearer ${this.apiKey}`,
+              },
+              timeout: 5000,
+              validateStatus: () => true,
+            });
+            
+            logger.info('Wechaty service connection test successful (status check)', {
+              url: `${this.baseUrl}/api/status`,
+              status: statusResponse.status,
+            });
+            return true;
+          } catch (statusError) {
+            // Both failed
+          }
         }
       }
 
@@ -98,7 +159,8 @@ class WechatyAdapter {
    * Register webhook with Wechaty service
    * 
    * Endpoint: POST /webhook/register (or POST /api/webhook/register)
-   * Authentication: Required (Bearer token)
+   * Authentication: Required - ALL endpoints except /health require API key
+   * Format: Authorization: Bearer <API_KEY>
    * 
    * Request Format:
    * POST https://3001.share.zrok.io/webhook/register
@@ -354,7 +416,8 @@ class WechatyAdapter {
       // Send via HTTP API
       // Endpoint: POST /api/send
       // URL: https://3001.share.zrok.io/api/send (via zrok tunnel)
-      // Authentication: Required (Bearer token)
+      // Authentication: Required - ALL endpoints except /health require API key
+      // Format: Authorization: Bearer <API_KEY>
       // 
       // Request Format:
       // {
