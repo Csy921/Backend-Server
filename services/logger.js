@@ -127,8 +127,8 @@ const logger = winston.createLogger({
             source = 'ROUTING';
           }
           
-          // Simple format: timestamp [SOURCE] message
-          return `${timestamp} [${source}]: ${message}`;
+          // Simple format: [SOURCE] message (no timestamp in terminal)
+          return `[${source}]: ${message}`;
         })
       ),
     }),
