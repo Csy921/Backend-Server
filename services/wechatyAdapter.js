@@ -585,15 +585,7 @@ class WechatyAdapter {
       logger.info('═══════════════════════════════════════════════════════════');
       logger.info('📤 SENDING REQUEST TO WECHATY SERVICE');
       logger.info('═══════════════════════════════════════════════════════════');
-      logger.info('📍 Full URL:', endpoint);
-      logger.info('🔗 Base URL:', this.baseUrl);
-      logger.info('📋 Method: POST');
-      logger.info('📦 Request Body:', JSON.stringify(requestBody, null, 2));
-      logger.info('📏 Message Length:', messageText.length);
-      logger.info('🔑 Has API Key:', !!this.apiKey);
-      logger.info('🏠 Has RoomId:', !!requestBody.roomId, requestBody.roomId || 'N/A');
-      logger.info('👥 Has GroupId:', !!requestBody.groupId, requestBody.groupId || 'N/A');
-      logger.info('📝 Has RoomName:', !!requestBody.roomName, requestBody.roomName || 'N/A');
+      logger.info(`📍 Full URL: ${endpoint}\n🔗 Base URL: ${this.baseUrl}\n📋 Method: POST\n📦 Request Body: ${JSON.stringify(requestBody, null, 2)}\n📏 Message Length: ${messageText.length}\n🔑 Has API Key: ${!!this.apiKey}\n🏠 Has RoomId: ${!!requestBody.roomId ? requestBody.roomId : 'N/A'}\n👥 Has GroupId: ${!!requestBody.groupId ? requestBody.groupId : 'N/A'}\n📝 Has RoomName: ${!!requestBody.roomName ? requestBody.roomName : 'N/A'}`);
       logger.info('═══════════════════════════════════════════════════════════');
       
       // Also log in structured format for parsing
@@ -615,9 +607,7 @@ class WechatyAdapter {
       });
 
       // Log immediately before sending request
-      logger.info('🚀 EXECUTING HTTP POST REQUEST NOW...');
-      logger.info('   URL:', endpoint);
-      logger.info('   Body:', JSON.stringify(requestBody));
+      logger.info(`🚀 EXECUTING HTTP POST REQUEST NOW...\n   URL: ${endpoint}\n   Body: ${JSON.stringify(requestBody)}`);
       
       const response = await axios.post(
         endpoint,
@@ -632,8 +622,8 @@ class WechatyAdapter {
         }
       );
       
-      logger.info('✅ REQUEST COMPLETED - Status:', response.status);
-      logger.debug('Response data:', JSON.stringify(response.data, null, 2));
+      logger.info(`✅ REQUEST COMPLETED - Status: ${response.status}`);
+      logger.info(`Response data: ${JSON.stringify(response.data, null, 2)}`);
       
       // Check if response indicates success
       // Success can be indicated by:
@@ -669,16 +659,16 @@ class WechatyAdapter {
       
       // Check if response indicates an error
       if (response.status < 200 || response.status >= 300) {
-        logger.error('═══════════════════════════════════════════════════════════');
-        logger.error('❌ ERROR RESPONSE RECEIVED');
-        logger.error('═══════════════════════════════════════════════════════════');
-        logger.error('📍 Request URL:', endpoint);
-        logger.error('📦 Request Body Sent:', JSON.stringify(requestBody, null, 2));
-        logger.error('📊 Response Status:', response.status, response.statusText);
-        logger.error('📄 Response Data:', JSON.stringify(response.data, null, 2));
-        logger.error('═══════════════════════════════════════════════════════════');
+        logger.error(`═══════════════════════════════════════════════════════════\n❌ ERROR RESPONSE RECEIVED\n═══════════════════════════════════════════════════════════\n📍 Request URL: ${endpoint}\n📦 Request Body Sent: ${JSON.stringify(requestBody, null, 2)}\n📊 Response Status: ${response.status} ${response.statusText || ''}\n📄 Response Data: ${JSON.stringify(response.data, null, 2)}\n═══════════════════════════════════════════════════════════`);
         // Include status and error details in the message for better visibility
-        const errorMsg = response.data?.error || response.data?.message || 'Unknown error';
+        // Extract error message from various possible fields
+        const errorMsg = 
+          response.data?.error || 
+          response.data?.message || 
+          response.data?.errorMessage ||
+          response.data?.detail ||
+          response.statusText ||
+          'Unknown error';
         const statusCode = response.status;
         
         // Extract full error details
@@ -700,52 +690,35 @@ class WechatyAdapter {
         
         logger.error(`Wechaty service returned error status ${statusCode}: ${errorMsg}`, fullErrorDetails);
         
-        // For 500 errors, log the full response for debugging
-        if (statusCode === 500) {
-          logger.error('Full 500 error response details:', {
-            status: statusCode,
-            statusText: response.statusText,
-            headers: response.headers,
-            data: response.data,
-            dataString: JSON.stringify(response.data),
-            requestSent: requestBody,
-          });
-        }
-        
         // Log specific error types for common issues
         if (statusCode === 400) {
           logger.error('Bad Request - Check message format and required fields', {
             hint: 'Ensure "message" field is provided and valid',
+            errorDetails: errorMsg,
+            responseData: response.data,
           });
         } else if (statusCode === 401) {
           logger.error('Unauthorized - Check WECHATY_API_KEY is correct', {
             hasApiKey: !!this.apiKey,
+            errorDetails: errorMsg,
+            responseData: response.data,
           });
         } else if (statusCode === 404) {
-          logger.error('Room not found - Check if roomId exists and bot is in the group', {
+          logger.error('Room/group not found - Check if roomId exists and bot is in the group', {
             roomId: groupId,
             hint: response.data?.hint || 'Make sure the bot is in the group and the roomId is correct',
+            errorDetails: errorMsg,
+            responseData: response.data,
           });
         } else if (statusCode === 500) {
-          logger.error('Internal Server Error - Wechaty service encountered an error', {
-            hint: 'This is a server-side error. Check Wechaty service logs for details.',
-            possibleCauses: [
-              'Bot may have lost connection to WeChat',
-              'WeChat API may be temporarily unavailable',
-              'Room lookup may have failed',
-              'Message sending may have encountered an error'
-            ],
-            responseData: response.data,
-            requestBody: {
-              messageLength: messageText?.length || 0,
-              hasRoomId: !!requestBody.roomId,
-              hasGroupId: !!requestBody.groupId,
-              roomId: requestBody.roomId,
-            },
-          });
+          // 500 errors occur when room.say() fails due to WeChat connection issues
+          logger.error(`═══════════════════════════════════════════════════════════\n❌ INTERNAL SERVER ERROR (500) - WeChat Connection Issue\n═══════════════════════════════════════════════════════════\nError Message: ${errorMsg}\nStatus: ${statusCode} ${response.statusText || ''}\nFull Response: ${JSON.stringify(response.data, null, 2)}\nRequest Sent: ${JSON.stringify(requestBody, null, 2)}\nMost Common Causes (room.say() failures):\n  1. WeChat connection lost\n  2. WeChat desktop app closed/crashed\n  3. WeChat API error\n  4. Bot kicked from group\n  5. Rate limiting or temporary WeChat issues\n═══════════════════════════════════════════════════════════\nCheck the error message in the 500 response body for the specific cause\nCheck Wechaty service logs for detailed error information\n═══════════════════════════════════════════════════════════`);
         } else if (statusCode === 503) {
-          logger.error('Service unavailable - Bot may not be logged in yet', {
-            hint: 'Wait for the bot to connect to WeChat',
+          logger.error('Service unavailable - Bot not logged in to WeChat', {
+            hint: 'Wait for the bot to connect to WeChat, or check if bot is logged in',
+            errorDetails: errorMsg,
+            responseData: response.data,
+            note: '503 = Bot not logged in (not 500)',
           });
         }
         
