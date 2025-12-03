@@ -29,14 +29,20 @@ class WechatyAdapter {
   /**
    * Initialize connection to external Wechaty service
    * 
-   * Two separate operations:
-   * 1. Receiving: Registers webhook URL via POST /webhook/register
+   * Two different mechanisms:
+   * 
+   * 1. Sending messages (Server → WeChat):
+   *    - Method: Direct API call (NOT a webhook)
+   *    - Endpoint: POST /api/send on Wechaty
+   *    - How it works: Backend calls Wechaty's /api/send endpoint directly
+   *    - No webhook needed: This is a synchronous HTTP request/response
+   *    - Example: POST https://3001.share.zrok.io/api/send
+   * 
+   * 2. Receiving messages (WeChat → Server):
+   *    - Method: Webhook registration via POST /webhook/register
    *    - This allows WeChat → Wechaty → backend message flow
    *    - Only needed once at startup
-   * 
-   * 2. Sending: Uses POST /api/send directly (no registration needed)
-   *    - This allows backend → Wechaty → WeChat message flow
-   *    - Called whenever sending a message
+   *    - After registration, Wechaty sends messages to registered webhook URL
    */
   async initialize() {
     try {
@@ -432,10 +438,39 @@ class WechatyAdapter {
   /**
    * Send message to a WeChat group via Wechaty service
    * 
-   * This is for SENDING messages: backend → Wechaty → WeChat
-   * Uses POST /api/send directly - NO registration needed
+   * Mechanism: Direct API call (NOT a webhook)
+   * Flow: Backend → Wechaty → WeChat (sending messages)
    * 
-   * For RECEIVING messages, webhook must be registered via registerWebhook()
+   * This is a synchronous HTTP request/response - no webhook needed
+   * Backend calls Wechaty's /api/send endpoint directly
+   * 
+   * Endpoint: POST /api/send
+   * Authentication: Required - ALL endpoints except /health require API key
+   * Format: Authorization: Bearer <API_KEY>
+   * 
+   * Example:
+   * POST https://3001.share.zrok.io/api/send
+   * Authorization: Bearer <API_KEY>
+   * {
+   *   "message": "Hello",
+   *   "roomId": "27551115736@chatroom"
+   * }
+   * 
+   * Request Format:
+   * {
+   *   "message": "string (required)",
+   *   "roomId": "string (optional, primary identifier)",
+   *   "groupId": "string (optional, alias for roomId)",
+   *   "roomName": "string (optional, fallback if roomId not found)"
+   * }
+   *
+   * Response:
+   * {
+   *   "success": true,
+   *   "message": "Message sent to group",
+   *   "roomId": "27551115736@chatroom",
+   *   "roomName": "Supplier Group 1"
+   * }
    * 
    * @param {string} groupId - WeChat group ID (e.g., "27551115736@chatroom")
    * @param {string} messageText - Message text to send
@@ -449,27 +484,9 @@ class WechatyAdapter {
         throw new Error('Wechaty adapter is not ready');
       }
 
-      // Send via HTTP API
-      // Endpoint: POST /api/send
-      // URL: https://3001.share.zrok.io/api/send (via zrok tunnel)
-      // Authentication: Required - ALL endpoints except /health require API key
-      // Format: Authorization: Bearer <API_KEY>
-      // 
-      // Request Format:
-      // {
-      //   "message": "string (required)",
-      //   "roomId": "string (optional, primary identifier)",
-      //   "groupId": "string (optional, alias for roomId)",
-      //   "roomName": "string (optional, fallback if roomId not found)"
-      // }
-      //
-      // Response:
-      // {
-      //   "success": true,
-      //   "message": "Message sent to group",
-      //   "roomId": "27551115736@chatroom",
-      //   "roomName": "Supplier Group 1"
-      // }
+      // Direct API call to send message - NOT a webhook
+      // This is a synchronous HTTP request/response
+      // Backend calls Wechaty directly
       // Ensure baseUrl doesn't have trailing slash
       const baseUrlClean = this.baseUrl.replace(/\/$/, '');
       const endpoint = `${baseUrlClean}/api/send`;
