@@ -28,7 +28,15 @@ class WechatyAdapter {
 
   /**
    * Initialize connection to external Wechaty service
-   * Registers webhook for receiving WeChat messages
+   * 
+   * Two separate operations:
+   * 1. Receiving: Registers webhook URL via POST /webhook/register
+   *    - This allows WeChat → Wechaty → backend message flow
+   *    - Only needed once at startup
+   * 
+   * 2. Sending: Uses POST /api/send directly (no registration needed)
+   *    - This allows backend → Wechaty → WeChat message flow
+   *    - Called whenever sending a message
    */
   async initialize() {
     try {
@@ -41,11 +49,12 @@ class WechatyAdapter {
       // Test connection first
       await this.testConnection();
 
-      // Register webhook with Wechaty service
+      // Register webhook for RECEIVING messages from WeChat
+      // This is separate from sending - sending uses /api/send directly
       await this.registerWebhook();
 
       this.isReady = true;
-      logger.info('Wechaty adapter initialized');
+      logger.info('Wechaty adapter initialized - webhook registered for receiving messages');
     } catch (error) {
       logger.error('Failed to initialize Wechaty adapter', error);
       throw error;
@@ -156,26 +165,37 @@ class WechatyAdapter {
   }
 
   /**
-   * Register webhook with Wechaty service
+   * Register webhook with Wechaty service for RECEIVING messages
+   * 
+   * This is for RECEIVING messages: WeChat → Wechaty → backend
+   * For SENDING messages, use sendToGroup() which calls POST /api/send directly (no registration needed)
    * 
    * Endpoint: POST /webhook/register (or POST /api/webhook/register)
    * Authentication: Required - ALL endpoints except /health require API key
    * Format: Authorization: Bearer <API_KEY>
    * 
-   * Request Format:
+   * Request Format (New Format - Preferred):
    * POST https://3001.share.zrok.io/webhook/register
    * Authorization: Bearer 07a4161616db38e537faa58d73de461ac971fd036e6a89526a15b478ac288b28
    * {
-   *   "webhookUrl": "https://backend-server-6wmd.onrender.com/webhook/wechat/webhook",
-   *   "events": ["message", "group_message"]
+   *   "webhook_url": "https://backend-server-6wmd.onrender.com/webhook/wechat/webhook",
+   *   "token": "optional_auth_token",
+   *   "platform": "whatsapp",
+   *   "description": "WhatsApp to WeChat bridge",
+   *   "timestamp": "2025-12-02T19:45:30.123+08:00"
    * }
+   * 
+   * Legacy formats also supported:
+   * - { "webhookUrl": "...", "events": ["message", "group_message"] }
+   * - { "url": "...", "events": ["message", "group_message"] }
    * 
    * Response:
    * {
    *   "success": true,
    *   "message": "Webhook registered successfully",
-   *   "webhookUrl": "https://backend-server-6wmd.onrender.com/webhook/wechat/webhook",
-   *   "events": ["message", "group_message"]
+   *   "webhook_url": "https://backend-server-6wmd.onrender.com/webhook/wechat/webhook",
+   *   "events": ["message", "group_message"],
+   *   "registered_at": "2025-12-02T19:45:30.123+08:00"
    * }
    */
   async registerWebhook() {
@@ -191,10 +211,17 @@ class WechatyAdapter {
     }
     
     try {
-      // Wechaty service expects webhookUrl format (as per architecture documentation)
+      // Use new format (webhook_url with underscore) - preferred format
+      // Also supports legacy formats for backward compatibility
       const requestBody = {
-        webhookUrl: webhookUrl,
-        events: ['message', 'group_message'],
+        webhook_url: webhookUrl, // New format (preferred)
+        platform: 'whatsapp',
+        description: 'WhatsApp to WeChat bridge',
+        timestamp: new Date().toISOString(),
+        // Include legacy fields for backward compatibility
+        webhookUrl: webhookUrl, // Legacy format 1
+        url: webhookUrl, // Legacy format 2
+        events: ['message', 'group_message'], // Legacy format 2
       };
       
       const response = await axios.post(
@@ -210,13 +237,16 @@ class WechatyAdapter {
       );
 
       // Log successful registration with response details
+      // Response may use webhook_url (new) or webhookUrl (legacy)
+      const registeredUrl = response.data?.webhook_url || response.data?.webhookUrl || response.data?.url;
       logger.info('Webhook registered with Wechaty service', {
         webhookUrl,
         status: response.status,
         responseData: response.data,
         success: response.data?.success,
-        registeredUrl: response.data?.webhookUrl,
+        registeredUrl: registeredUrl,
         events: response.data?.events,
+        registeredAt: response.data?.registered_at,
       });
       
       // Detailed log for webhook registration
@@ -224,9 +254,9 @@ class WechatyAdapter {
         type: 'webhook_registration',
         direction: 'backend → wechaty',
         endpoint: `${this.baseUrl}/webhook/register`,
-        requestBody: requestBody, // Format: { webhookUrl, events }
+        requestBody: requestBody, // Format: { webhook_url, platform, description, timestamp, ...legacy fields }
         responseStatus: response.status,
-        responseData: response.data, // Expected: { success, message, webhookUrl, events, note }
+        responseData: response.data, // Expected: { success, message, webhook_url, events, registered_at }
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
@@ -400,7 +430,13 @@ class WechatyAdapter {
   }
 
   /**
-   * Send message to a WeChat group via your Wechaty service
+   * Send message to a WeChat group via Wechaty service
+   * 
+   * This is for SENDING messages: backend → Wechaty → WeChat
+   * Uses POST /api/send directly - NO registration needed
+   * 
+   * For RECEIVING messages, webhook must be registered via registerWebhook()
+   * 
    * @param {string} groupId - WeChat group ID (e.g., "27551115736@chatroom")
    * @param {string} messageText - Message text to send
    * @param {Object} options - Optional parameters
