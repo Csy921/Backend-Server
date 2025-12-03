@@ -38,7 +38,7 @@ This document specifies the expected API contracts for external WhatsApp, Wechat
 
 ## Wechaty Service API
 
-Base URL: `https://3001.share.zrok.io`
+Base URL: `https://unsceptical-chester-unrevelational.ngrok-free.dev`
 
 ### Public Endpoints (No Authentication)
 

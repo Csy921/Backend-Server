@@ -196,7 +196,7 @@ class WechatyAdapter {
    * Format: Authorization: Bearer <API_KEY>
    * 
    * Request Format (New Format - Preferred):
-   * POST https://3001.share.zrok.io/webhook/register
+   * POST https://unsceptical-chester-unrevelational.ngrok-free.dev/webhook/register
    * Authorization: Bearer 07a4161616db38e537faa58d73de461ac971fd036e6a89526a15b478ac288b28
    * {
    *   "webhook_url": "https://backend-server-6wmd.onrender.com/webhook/wechat/webhook",
@@ -505,7 +505,7 @@ class WechatyAdapter {
    * Format: Authorization: Bearer <API_KEY>
    * 
    * Example:
-   * POST https://3001.share.zrok.io/api/send
+   * POST https://unsceptical-chester-unrevelational.ngrok-free.dev/api/send
    * Authorization: Bearer <API_KEY>
    * {
    *   "message": "Hello",
