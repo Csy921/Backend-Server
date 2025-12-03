@@ -254,32 +254,62 @@ class WechatyAdapter {
             'Content-Type': 'application/json',
           },
           timeout: 30000, // 30 seconds timeout for webhook registration
+          validateStatus: () => true, // Don't throw on any status code - handle manually
         }
       );
 
-      // Log successful registration with response details
-      // Response may use webhook_url (new) or webhookUrl (legacy)
-      const registeredUrl = response.data?.webhook_url || response.data?.webhookUrl || response.data?.url;
-      logger.info('Webhook registered with Wechaty service', {
-        webhookUrl,
+      // Log the raw response first for debugging
+      logger.debug('Webhook registration response received', {
         status: response.status,
-        responseData: response.data,
-        success: response.data?.success,
-        registeredUrl: registeredUrl,
-        events: response.data?.events,
-        registeredAt: response.data?.registered_at,
+        statusText: response.statusText,
+        hasData: !!response.data,
+        dataKeys: response.data ? Object.keys(response.data) : [],
       });
-      
-      // Detailed log for webhook registration
-      logger.info('[WECHATY OUTGOING]', {
-        type: 'webhook_registration',
-        direction: 'backend → wechaty',
-        endpoint: `${this.baseUrl}/webhook/register`,
-        requestBody: requestBody, // Format: { webhook_url, platform, description, timestamp, ...legacy fields }
-        responseStatus: response.status,
-        responseData: response.data, // Expected: { success, message, webhook_url, events, registered_at }
-        timestamp: new Date().toISOString(),
-      });
+
+      // Check if response indicates success
+      // Success can be indicated by:
+      // 1. HTTP status 200-299
+      // 2. response.data.success === true
+      // 3. response.data.message contains "success" or "registered"
+      const isSuccess = 
+        (response.status >= 200 && response.status < 300) ||
+        response.data?.success === true ||
+        (response.data?.message && /success|registered/i.test(response.data.message));
+
+      if (isSuccess) {
+        // Log successful registration with response details
+        // Response may use webhook_url (new) or webhookUrl (legacy)
+        const registeredUrl = response.data?.webhook_url || response.data?.webhookUrl || response.data?.url;
+        logger.info('✅ Webhook registered successfully with Wechaty service', {
+          webhookUrl,
+          status: response.status,
+          responseData: response.data,
+          success: response.data?.success,
+          registeredUrl: registeredUrl,
+          events: response.data?.events,
+          registeredAt: response.data?.registered_at,
+        });
+        
+        // Detailed log for webhook registration
+        logger.info('[WECHATY OUTGOING]', {
+          type: 'webhook_registration',
+          direction: 'backend → wechaty',
+          endpoint: `${this.baseUrl}/webhook/register`,
+          requestBody: requestBody, // Format: { webhook_url, platform, description, timestamp, ...legacy fields }
+          responseStatus: response.status,
+          responseData: response.data, // Expected: { success, message, webhook_url, events, registered_at }
+          timestamp: new Date().toISOString(),
+        });
+        return; // Success - exit early
+      } else {
+        // Response status is not 2xx or success flag is false
+        logger.warn('Webhook registration returned non-success response', {
+          status: response.status,
+          responseData: response.data,
+          webhookUrl,
+        });
+        throw new Error(`Webhook registration returned status ${response.status}: ${response.data?.message || response.data?.error || 'Unknown error'}`);
+      }
     } catch (error) {
       // Extract detailed error information
       const errorDetails = {
@@ -334,6 +364,15 @@ class WechatyAdapter {
         logger.error('Webhook registration: Server error - Check Wechaty service logs', {
           status: error.response?.status,
           responseData: error.response?.data,
+        });
+      } else if (error.response?.status >= 200 && error.response?.status < 300) {
+        // This shouldn't happen - 200 responses should be handled in try block
+        // But if it does, log it as a warning
+        logger.warn('Webhook registration: Received 2xx status but error was thrown', {
+          status: error.response?.status,
+          responseData: error.response?.data,
+          errorMessage: error.message,
+          note: 'This may indicate a response parsing issue',
         });
       }
       
@@ -594,6 +633,39 @@ class WechatyAdapter {
       );
       
       logger.info('✅ REQUEST COMPLETED - Status:', response.status);
+      logger.debug('Response data:', JSON.stringify(response.data, null, 2));
+      
+      // Check if response indicates success
+      // Success can be indicated by:
+      // 1. HTTP status 200-299
+      // 2. response.data.success === true
+      // 3. response.data.message contains "success" or "sent"
+      const isSuccess = 
+        (response.status >= 200 && response.status < 300) ||
+        response.data?.success === true ||
+        (response.data?.message && /success|sent/i.test(response.data.message));
+
+      if (isSuccess) {
+        // Success - log and return true
+        logger.info('✅ Message sent successfully to WeChat group', {
+          roomId: groupId,
+          status: response.status,
+          responseData: response.data,
+        });
+        
+        logger.debug('[WECHATY OUTGOING]', {
+          type: 'send_message',
+          direction: 'backend → wechaty',
+          roomId: groupId,
+          endpoint: endpoint,
+          requestBody: requestBody,
+          responseStatus: response.status,
+          responseData: response.data,
+          timestamp: new Date().toISOString(),
+        });
+        
+        return true;
+      }
       
       // Check if response indicates an error
       if (response.status < 200 || response.status >= 300) {
@@ -680,26 +752,6 @@ class WechatyAdapter {
         return false;
       }
 
-      logger.debug('Message sent to WeChat group via adapter', {
-        roomId: groupId,
-        status: response.status,
-        endpoint: endpoint,
-        responseData: response.data,
-      });
-      
-      // Detailed log for all Wechaty communication (debug level to reduce noise)
-      logger.debug('[WECHATY OUTGOING]', {
-        type: 'send_message',
-        direction: 'backend → wechaty',
-        roomId: groupId,
-        endpoint: endpoint,
-        requestBody: requestBody, // Show exact request sent
-        responseStatus: response.status,
-        responseData: response.data,
-        timestamp: new Date().toISOString(),
-      });
-
-      return response.status === 200 || response.status === 201;
     } catch (error) {
       // Log detailed error information - ensure all details are captured
       const errorDetails = {
