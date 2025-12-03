@@ -37,12 +37,14 @@ class WechatyAdapter {
    *    - How it works: Backend calls Wechaty's /api/send endpoint directly
    *    - No webhook needed: This is a synchronous HTTP request/response
    *    - Example: POST https://3001.share.zrok.io/api/send
+   *    - Works immediately after connection test - no registration needed
    * 
    * 2. Receiving messages (WeChat → Server):
    *    - Method: Webhook registration via POST /webhook/register
    *    - This allows WeChat → Wechaty → backend message flow
-   *    - Only needed once at startup
+   *    - Only needed for receiving messages
    *    - After registration, Wechaty sends messages to registered webhook URL
+   *    - Failure is non-blocking - sending still works without webhook registration
    */
   async initialize() {
     try {
@@ -55,12 +57,25 @@ class WechatyAdapter {
       // Test connection first
       await this.testConnection();
 
-      // Register webhook for RECEIVING messages from WeChat
-      // This is separate from sending - sending uses /api/send directly
-      await this.registerWebhook();
-
+      // Mark adapter as ready for SENDING messages (direct API call, no webhook needed)
       this.isReady = true;
-      logger.info('Wechaty adapter initialized - webhook registered for receiving messages');
+      logger.info('Wechaty adapter ready for sending messages (direct API call)');
+
+      // Try to register webhook for RECEIVING messages from WeChat
+      // This is optional - failure doesn't block sending messages
+      // Sending uses /api/send directly and doesn't need webhook registration
+      try {
+        await this.registerWebhook();
+        logger.info('Webhook registered for receiving messages');
+      } catch (webhookError) {
+        // Webhook registration failed, but adapter is still ready for sending
+        logger.warn('Webhook registration failed - sending messages will still work', {
+          error: webhookError.message,
+          note: 'Sending messages uses direct API call (POST /api/send) and doesn\'t require webhook registration',
+          note2: 'Only receiving messages requires webhook registration',
+        });
+        // Don't throw - adapter is ready for sending even without webhook
+      }
     } catch (error) {
       logger.error('Failed to initialize Wechaty adapter', error);
       throw error;
@@ -322,7 +337,9 @@ class WechatyAdapter {
         });
       }
       
-      // Throw error - webhook registration is required
+      // Don't throw - webhook registration failure is non-blocking
+      // Sending messages works without webhook registration (uses direct API call)
+      // Only receiving messages requires webhook registration
       throw new Error(`Webhook registration failed: ${error.message}`);
     }
   }
