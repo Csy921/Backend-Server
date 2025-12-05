@@ -40,11 +40,23 @@ router.post('/webhook', async (req, res) => {
 
       if (value?.messages) {
         for (const message of value.messages) {
+          // Extract image if present
+          let imageUrl = null;
+          let imageCaption = null;
+          
+          if (message.type === 'image' && message.image) {
+            imageUrl = message.image.id || message.image.link;
+            imageCaption = message.image.caption || message.text?.body || '';
+          }
+          
           await processWhatsAppMessage({
             from: message.from,
             body: message.text?.body || message.body?.text || '',
             messageId: message.id,
             timestamp: message.timestamp,
+            imageUrl: imageUrl,
+            imageCaption: imageCaption,
+            hasImage: !!imageUrl,
           });
         }
       }
@@ -113,6 +125,30 @@ router.post('/webhook', async (req, res) => {
                       JSON.stringify(messageBody);
       }
       
+      // Extract image/media information
+      let imageUrl = null;
+      let imageCaption = null;
+      
+      // Check for image in various formats
+      if (body.image || body.media || body.attachment) {
+        const imageData = body.image || body.media || body.attachment;
+        if (typeof imageData === 'string') {
+          imageUrl = imageData;
+        } else if (typeof imageData === 'object' && imageData !== null) {
+          imageUrl = imageData.url || imageData.link || imageData.src || imageData.id;
+          imageCaption = imageData.caption || imageData.text || messageBody;
+        }
+      }
+      
+      // Also check for WhatsApp Business API format
+      if (body.type === 'image' || body.messageType === 'image') {
+        const imageObj = body.image || body.media || body.attachment;
+        if (imageObj) {
+          imageUrl = imageObj.url || imageObj.link || imageObj.id || imageObj.media_id;
+          imageCaption = imageObj.caption || messageBody;
+        }
+      }
+
       const message = {
         from: from,
         body: messageBody,
@@ -133,6 +169,10 @@ router.post('/webhook', async (req, res) => {
                  body.group_id || 
                  body.chat_id ||
                  body.to,
+        // Image information
+        imageUrl: imageUrl,
+        imageCaption: imageCaption,
+        hasImage: !!imageUrl,
       };
 
       // Log the raw body for debugging (first time only to avoid spam)
@@ -282,13 +322,11 @@ async function forwardMessageToWeChatGroup(message) {
     const wechatGroupId = '27551115736@chatroom';
     const wechatyAdapter = getWechatyAdapter();
     
-    // Format message with sender name and time
-    const formattedMessage = formatWhatsAppMessageForWeChat(message);
-
     logger.debug('Forwarding WhatsApp message to WeChat group', {
       groupId: wechatGroupId,
       from: message.from || message.sender || message.senderNumber || message.senderName,
       adapterReady: wechatyAdapter.isReady,
+      hasImage: message.hasImage || !!message.imageUrl,
     });
 
     // Initialize adapter if not ready (fallback - should already be initialized at startup)
@@ -306,18 +344,45 @@ async function forwardMessageToWeChatGroup(message) {
       }
     }
 
-    const sent = await wechatyAdapter.sendToGroup(wechatGroupId, formattedMessage);
-
-    if (sent) {
-      logger.debug('Successfully forwarded WhatsApp message to WeChat group', {
-        groupId: wechatGroupId,
-        from: message.from || message.sender || message.senderNumber || message.senderName,
-      });
+    // Handle image forwarding
+    if (message.hasImage && message.imageUrl) {
+      // Format caption with sender info if available
+      let caption = message.imageCaption || '';
+      if (message.from) {
+        const senderInfo = `[From: ${message.from}]`;
+        caption = caption ? `${senderInfo}\n${caption}` : senderInfo;
+      }
+      
+      const imageSent = await wechatyAdapter.sendImage(wechatGroupId, message.imageUrl, caption);
+      
+      if (imageSent) {
+        logger.info('Successfully forwarded WhatsApp image to WeChat group', {
+          groupId: wechatGroupId,
+          from: message.from || message.sender || message.senderNumber || message.senderName,
+          imageUrl: message.imageUrl,
+        });
+      } else {
+        logger.error('Failed to forward WhatsApp image to WeChat group', {
+          groupId: wechatGroupId,
+          imageUrl: message.imageUrl,
+        });
+      }
     } else {
-      // Only log errors, not failures (errors are logged in wechatyAdapter)
-      logger.debug('Message forwarding returned false', {
-        groupId: wechatGroupId,
-      });
+      // Handle text message forwarding
+      const formattedMessage = formatWhatsAppMessageForWeChat(message);
+      const sent = await wechatyAdapter.sendToGroup(wechatGroupId, formattedMessage);
+
+      if (sent) {
+        logger.debug('Successfully forwarded WhatsApp message to WeChat group', {
+          groupId: wechatGroupId,
+          from: message.from || message.sender || message.senderNumber || message.senderName,
+        });
+      } else {
+        // Only log errors, not failures (errors are logged in wechatyAdapter)
+        logger.debug('Message forwarding returned false', {
+          groupId: wechatGroupId,
+        });
+      }
     }
   } catch (error) {
     logger.error('Error forwarding WhatsApp message to WeChat group', {

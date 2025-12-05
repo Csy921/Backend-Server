@@ -224,6 +224,25 @@ async function forwardMessageToWhatsAppGroup(message) {
       return;
     }
 
+    // Extract image information from WeChat message
+    let imageUrl = null;
+    let imageCaption = null;
+    
+    // Check for image in various formats
+    if (message.type === 'image' || message.messageType === 'image' || message.mediaType === 'image') {
+      imageUrl = message.imageUrl || message.image || message.media || message.attachment || 
+                 message.fileUrl || message.url;
+      imageCaption = message.caption || message.text || message.message || message.content;
+    } else if (message.image || message.media || message.attachment) {
+      const imageData = message.image || message.media || message.attachment;
+      if (typeof imageData === 'string') {
+        imageUrl = imageData;
+      } else if (typeof imageData === 'object' && imageData !== null) {
+        imageUrl = imageData.url || imageData.link || imageData.src || imageData.id;
+        imageCaption = imageData.caption || message.text || message.message || message.content;
+      }
+    }
+    
     // Check if message has any content to forward
     // Support all Wechaty message formats
     const hasContent = !!(
@@ -231,7 +250,8 @@ async function forwardMessageToWhatsAppGroup(message) {
       message.message ||        // Old format
       message.content ||        // Fallback
       message.payload ||         // Fallback
-      (message.message && message.message.conversation)  // Nested format
+      (message.message && message.message.conversation) ||  // Nested format
+      imageUrl                  // Image content
     );
     if (!hasContent) {
       logger.debug('WeChat message has no content to forward', {
@@ -243,28 +263,62 @@ async function forwardMessageToWhatsAppGroup(message) {
 
     const whatsappAdapter = getWhatsAppAdapter();
     
-    // Format message with sender name, group name, and time
-    const formattedMessage = formatMessageWithMetadata(message);
-
-    logger.info('Forwarding WeChat message content to WhatsApp group', {
-      groupId: salesGroupId,
-      sender: message.talkerName || message.sender?.name || message.from || 'Unknown',
-      groupName: message.roomTopic || message.chat?.groupName || message.groupName || 'Unknown Group',
-      messageLength: formattedMessage.length,
-      preview: formattedMessage.slice(0, 120),
-    });
-
-    const sent = await whatsappAdapter.sendToGroup(salesGroupId, formattedMessage);
-
-    if (sent) {
-      logger.info('Successfully forwarded WeChat message to WhatsApp group', {
+    // Handle image forwarding
+    if (imageUrl) {
+      // Format caption with sender info
+      let caption = imageCaption || '';
+      const senderName = message.talkerName || message.sender?.name || message.from || 'Unknown';
+      const groupName = message.roomTopic || message.chat?.groupName || message.groupName || 'Unknown Group';
+      
+      if (caption) {
+        caption = `[WeChat → WhatsApp]\n\nFrom: ${senderName}\nGroup: ${groupName}\n\n${caption}`;
+      } else {
+        caption = `[WeChat → WhatsApp]\n\nFrom: ${senderName}\nGroup: ${groupName}`;
+      }
+      
+      logger.info('Forwarding WeChat image to WhatsApp group', {
         groupId: salesGroupId,
+        sender: senderName,
+        groupName: groupName,
+        imageUrl: imageUrl,
       });
+
+      const imageSent = await whatsappAdapter.sendImage(salesGroupId, imageUrl, caption);
+
+      if (imageSent) {
+        logger.info('Successfully forwarded WeChat image to WhatsApp group', {
+          groupId: salesGroupId,
+        });
+      } else {
+        logger.error('Failed to forward WeChat image to WhatsApp group', {
+          groupId: salesGroupId,
+          imageUrl: imageUrl,
+        });
+      }
     } else {
-      logger.error('Failed to forward WeChat message to WhatsApp group', {
+      // Handle text message forwarding
+      const formattedMessage = formatMessageWithMetadata(message);
+
+      logger.info('Forwarding WeChat message content to WhatsApp group', {
         groupId: salesGroupId,
-        formattedMessageLength: formattedMessage.length,
+        sender: message.talkerName || message.sender?.name || message.from || 'Unknown',
+        groupName: message.roomTopic || message.chat?.groupName || message.groupName || 'Unknown Group',
+        messageLength: formattedMessage.length,
+        preview: formattedMessage.slice(0, 120),
       });
+
+      const sent = await whatsappAdapter.sendToGroup(salesGroupId, formattedMessage);
+
+      if (sent) {
+        logger.info('Successfully forwarded WeChat message to WhatsApp group', {
+          groupId: salesGroupId,
+        });
+      } else {
+        logger.error('Failed to forward WeChat message to WhatsApp group', {
+          groupId: salesGroupId,
+          formattedMessageLength: formattedMessage.length,
+        });
+      }
     }
   } catch (error) {
     logger.error('Error forwarding WeChat message to WhatsApp group', {

@@ -69,11 +69,37 @@ class WechatyAdapter {
         logger.info('Webhook registered for receiving messages');
       } catch (webhookError) {
         // Webhook registration failed, but adapter is still ready for sending
-        logger.warn('Webhook registration failed - sending messages will still work', {
+        // Extract detailed error information for better debugging
+        const errorDetails = {
           error: webhookError.message,
-          note: 'Sending messages uses direct API call (POST /api/send) and doesn\'t require webhook registration',
-          note2: 'Only receiving messages requires webhook registration',
-        });
+          errorCode: webhookError.code,
+          status: webhookError.response?.status,
+          statusText: webhookError.response?.statusText,
+          responseData: webhookError.response?.data,
+          endpoint: `${this.baseUrl}/webhook/register`,
+        };
+        
+        // Check if this is a known non-critical error (e.g., endpoint doesn't exist)
+        const isNonCritical = 
+          webhookError.response?.status === 404 || // Endpoint not found
+          webhookError.code === 'ECONNREFUSED' || // Connection refused (might be expected)
+          webhookError.response?.status === 501; // Not implemented
+        
+        if (isNonCritical) {
+          // Log as debug/info since this might be expected (endpoint may not exist)
+          logger.debug('Webhook registration endpoint not available or not implemented - this is OK if you only need to send messages', {
+            ...errorDetails,
+            note: 'Sending messages uses direct API call (POST /api/send) and works without webhook registration',
+            note2: 'Webhook registration is only needed for receiving messages from WeChat',
+          });
+        } else {
+          // Log as warning for other errors
+          logger.warn('Webhook registration failed - sending messages will still work', {
+            ...errorDetails,
+            note: 'Sending messages uses direct API call (POST /api/send) and doesn\'t require webhook registration',
+            note2: 'Only receiving messages requires webhook registration',
+          });
+        }
         // Don't throw - adapter is ready for sending even without webhook
       }
     } catch (error) {
@@ -823,6 +849,191 @@ class WechatyAdapter {
    */
   getSessionFromGroup(groupId) {
     return this.groupToSessionMap.get(groupId) || null;
+  }
+
+  /**
+   * Send image to WeChat group or contact
+   * 
+   * Features:
+   * - Supports base64, URLs, and local file paths
+   * - Can send image with optional text caption
+   * - Works for both groups (roomId) and contacts (contactId)
+   * - Automatic format detection (JPEG, PNG, GIF, WebP)
+   * 
+   * Endpoint: POST /api/send
+   * Authentication: Required - ALL endpoints except /health require API key
+   * Format: Authorization: Bearer <API_KEY>
+   * 
+   * Example with URL:
+   * {
+   *   "imageUrl": "https://example.com/photo.jpg",
+   *   "message": "Check out this image!",
+   *   "roomId": "27551115736@chatroom"
+   * }
+   * 
+   * Example with base64:
+   * {
+   *   "imageBase64": "data:image/jpeg;base64,/9j/4AAQ...",
+   *   "roomId": "27551115736@chatroom"
+   * }
+   * 
+   * @param {string} groupId - WeChat group ID (e.g., "27551115736@chatroom") or contact ID
+   *                            For groups: use roomId in request body
+   *                            For contacts: use contactId in request body
+   * @param {string} imageUrl - URL of the image, local file path, or base64 string
+   *                            - URL: "https://example.com/photo.jpg"
+   *                            - Base64: "data:image/jpeg;base64,/9j/4AAQ..." or plain base64 string
+   *                            - Local path: "/path/to/image.jpg" or "C:\\path\\to\\image.jpg"
+   * @param {string} caption - Optional caption for the image (sent as "message" field)
+   * @returns {Promise<boolean>} Success status
+   */
+  async sendImage(groupId, imageUrl, caption = '') {
+    try {
+      if (!this.isReady) {
+        throw new Error('Wechaty adapter is not ready');
+      }
+
+      if (!imageUrl || typeof imageUrl !== 'string' || imageUrl.trim().length === 0) {
+        logger.error('Cannot send image without imageUrl or imageBase64', {
+          roomId: groupId,
+          imageUrlType: typeof imageUrl,
+        });
+        return false;
+      }
+
+      const baseUrlClean = this.baseUrl.replace(/\/$/, '');
+      const endpoint = `${baseUrlClean}/api/send`;
+      
+      // Determine if imageUrl is a base64 string, URL, or local file path
+      // Base64 indicators:
+      // - Starts with "data:image/" (full data URI)
+      // - Starts with "data:" (other data URI)
+      // - Long alphanumeric string with base64 characters (/, +, =)
+      const isDataUri = imageUrl.startsWith('data:image/') || imageUrl.startsWith('data:');
+      const isUrl = imageUrl.startsWith('http://') || imageUrl.startsWith('https://');
+      const isLocalPath = imageUrl.startsWith('/') || imageUrl.match(/^[A-Za-z]:\\/); // Unix path or Windows path
+      const isBase64 = isDataUri || (!isUrl && !isLocalPath && imageUrl.length > 100 && /^[A-Za-z0-9+/=]+$/.test(imageUrl));
+      
+      // Build request body according to Wechaty API
+      // Determine if groupId is a group (contains @chatroom) or contact
+      const isGroup = groupId.includes('@chatroom');
+      const requestBody = {};
+      
+      if (isGroup) {
+        requestBody.roomId = groupId;
+        requestBody.groupId = groupId; // Alias for backward compatibility
+      } else {
+        requestBody.contactId = groupId;
+      }
+      
+      if (isBase64) {
+        // Base64 image (supports both full data URI and plain base64)
+        requestBody.imageBase64 = imageUrl;
+      } else {
+        // URL or local file path
+        requestBody.imageUrl = imageUrl;
+      }
+      
+      // Add caption as "message" field (per Wechaty API spec)
+      if (caption && caption.trim().length > 0) {
+        requestBody.message = caption;
+      }
+
+      logger.info('Sending image to Wechaty service', {
+        endpoint: endpoint,
+        roomId: groupId,
+        imageType: isBase64 ? 'base64' : 'url',
+        imageUrl: isBase64 ? imageUrl.substring(0, 50) + '...' : imageUrl,
+        hasCaption: !!caption,
+      });
+
+      const response = await axios.post(
+        endpoint,
+        requestBody,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000,
+          validateStatus: () => true,
+        }
+      );
+
+      const isSuccess = 
+        (response.status >= 200 && response.status < 300) ||
+        response.data?.success === true ||
+        (response.data?.message && /success|sent/i.test(response.data.message));
+
+      if (isSuccess) {
+        logger.info('✅ Image sent successfully to WeChat', {
+          roomId: groupId,
+          status: response.status,
+          responseData: response.data,
+          imageType: isBase64 ? 'base64' : 'url',
+        });
+        
+        logger.debug('[WECHATY OUTGOING]', {
+          type: 'send_image',
+          direction: 'backend → wechaty',
+          roomId: groupId,
+          endpoint: endpoint,
+          requestBody: {
+            ...requestBody,
+            imageBase64: isBase64 ? '[base64 data]' : undefined,
+            imageUrl: isBase64 ? undefined : requestBody.imageUrl,
+          },
+          responseStatus: response.status,
+          responseData: response.data,
+          timestamp: new Date().toISOString(),
+        });
+        
+        return true;
+      } else {
+        logger.error('Wechaty service returned error for image', {
+          status: response.status,
+          responseData: response.data,
+          roomId: groupId,
+          imageType: isBase64 ? 'base64' : 'url',
+        });
+        return false;
+      }
+    } catch (error) {
+      logger.error('Error sending image to Wechaty service', {
+        error: error.message,
+        roomId: groupId,
+        imageType: imageUrl?.startsWith('data:') ? 'base64' : 'url',
+        stack: error.stack,
+      });
+      
+      // Log specific error types
+      if (error.code === 'ECONNREFUSED') {
+        logger.error('Connection refused - Wechaty service may not be running or URL is incorrect', {
+          baseUrl: this.baseUrl,
+          endpoint: `${this.baseUrl}/api/send`,
+        });
+      } else if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
+        logger.error('Connection timeout - Wechaty service may be slow or unreachable', {
+          baseUrl: this.baseUrl,
+          endpoint: `${this.baseUrl}/api/send`,
+        });
+      } else if (error.response?.status === 401) {
+        logger.error('Unauthorized - Check WECHATY_API_KEY is correct', {
+          hasApiKey: !!this.apiKey,
+        });
+      } else if (error.response?.status === 404) {
+        logger.error('Endpoint not found - Check if /api/send endpoint exists on Wechaty service', {
+          endpoint: `${this.baseUrl}/api/send`,
+        });
+      } else if (error.response?.status >= 500) {
+        logger.error('Wechaty service error - Service returned server error', {
+          status: error.response?.status,
+          data: error.response?.data,
+        });
+      }
+      
+      return false;
+    }
   }
 
   /**

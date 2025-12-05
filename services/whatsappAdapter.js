@@ -178,6 +178,154 @@ class WhatsAppAdapter {
   }
 
   /**
+   * Send image to WhatsApp
+   * @param {string} recipient - WhatsApp recipient ID (phone number or group ID)
+   * @param {string} imageUrl - URL of the image to send
+   * @param {string} caption - Optional caption for the image
+   * @returns {Promise<boolean>} Success status
+   */
+  async sendImage(recipient, imageUrl, caption = '') {
+    try {
+      // Option 1: If using WhatsApp Business API directly
+      if (this.config.phoneNumberId && this.config.accessToken) {
+        return await this.sendImageViaBusinessAPI(recipient, imageUrl, caption);
+      }
+
+      // Option 2: If using your own WhatsApp service (wsmanager)
+      return await this.sendImageViaCustomService(recipient, imageUrl, caption);
+    } catch (error) {
+      logger.error('Error sending WhatsApp image', error);
+      return false;
+    }
+  }
+
+  /**
+   * Send image via WhatsApp Business API
+   * @param {string} recipient - Recipient phone number (with country code, no +)
+   * @param {string} imageUrl - URL of the image
+   * @param {string} caption - Optional caption
+   * @returns {Promise<boolean>} Success status
+   */
+  async sendImageViaBusinessAPI(recipient, imageUrl, caption = '') {
+    try {
+      const response = await axios.post(
+        `https://graph.facebook.com/v18.0/${this.config.phoneNumberId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          to: recipient,
+          type: 'image',
+          image: {
+            link: imageUrl,
+            caption: caption || undefined,
+          },
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.config.accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      logger.info('WhatsApp image sent via Business API', {
+        recipient,
+        messageId: response.data?.messages?.[0]?.id,
+      });
+
+      return true;
+    } catch (error) {
+      logger.error('Error sending image via WhatsApp Business API', {
+        error: error.message,
+        response: error.response?.data,
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Send image via your custom WhatsApp service
+   * API: POST /api/whatsapp/send-image or POST /api/whatsapp/send-message with type=image
+   * 
+   * @param {string} recipient - Recipient ID (phone number or group ID)
+   * @param {string} imageUrl - URL of the image
+   * @param {string} caption - Optional caption
+   * @returns {Promise<boolean>} Success status
+   */
+  async sendImageViaCustomService(recipient, imageUrl, caption = '') {
+    try {
+      // Try image-specific endpoint first
+      const requestBody = {
+        to: recipient,
+        imageUrl: imageUrl,
+        caption: caption,
+      };
+
+      let response;
+      try {
+        response = await axios.post(
+          `${this.baseUrl}/api/whatsapp/send-image`,
+          requestBody,
+          {
+            headers: {
+              'Authorization': `Bearer ${this.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+      } catch (endpointError) {
+        // If image endpoint doesn't exist, try send-message with type
+        if (endpointError.response?.status === 404) {
+          response = await axios.post(
+            `${this.baseUrl}/api/whatsapp/send-message`,
+            {
+              to: recipient,
+              type: 'image',
+              imageUrl: imageUrl,
+              message: caption, // Use message field for caption
+            },
+            {
+              headers: {
+                'Authorization': `Bearer ${this.apiKey}`,
+                'Content-Type': 'application/json',
+              },
+            }
+          );
+        } else {
+          throw endpointError;
+        }
+      }
+
+      const responseData = response.data || {};
+      const isSuccess = response.status === 200 || response.status === 201;
+      const apiSuccess = responseData.success === true;
+
+      if (isSuccess && apiSuccess) {
+        logger.info('WhatsApp image sent via custom service', {
+          recipient,
+          messageId: responseData.messageId,
+          status: response.status,
+        });
+        return true;
+      } else {
+        logger.warn('WhatsApp API returned unsuccessful response for image', {
+          recipient,
+          status: response.status,
+          responseData,
+        });
+        return false;
+      }
+    } catch (error) {
+      logger.error('Error sending image via custom WhatsApp service', {
+        error: error.message,
+        recipient,
+        baseUrl: this.baseUrl,
+        response: error.response?.data,
+      });
+      return false;
+    }
+  }
+
+  /**
    * Verify webhook (for WhatsApp Business API)
    * @param {string} mode - Hub mode
    * @param {string} token - Verify token
