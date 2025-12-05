@@ -21,15 +21,63 @@ router.post('/webhook', async (req, res) => {
 
     const message = req.body;
 
-    // Log all incoming webhook requests
-    logger.info('[WECHATY WEBHOOK RECEIVED]', {
+    // Log all incoming webhook requests with full message details
+    const fullMessageLog = {
       type: 'webhook_request',
       direction: 'wechaty → backend',
       endpoint: '/webhook/wechat/webhook',
       rawBody: req.body,
       headers: req.headers,
       timestamp: new Date().toISOString(),
-    });
+      messageKeys: Object.keys(req.body || {}),
+      messageType: typeof req.body,
+      hasText: !!(req.body.text || req.body.message || req.body.content),
+      hasImage: !!(req.body.type === 'image' || req.body.image || req.body.imageUrl || req.body.imageBase64 || req.body.media || req.body.attachment),
+    };
+    
+    logger.info('[WECHATY WEBHOOK RECEIVED]', fullMessageLog);
+    
+    // Also save full message to a dedicated log file for debugging
+    const fs = require('fs');
+    const path = require('path');
+    const logsDir = path.join(__dirname, '../logs');
+    if (!fs.existsSync(logsDir)) {
+      fs.mkdirSync(logsDir, { recursive: true });
+    }
+    const messageLogFile = path.join(logsDir, 'wechaty-messages.json');
+    
+    try {
+      let messages = [];
+      if (fs.existsSync(messageLogFile)) {
+        try {
+          const content = fs.readFileSync(messageLogFile, 'utf8').trim();
+          if (content) {
+            messages = JSON.parse(content);
+            if (!Array.isArray(messages)) {
+              messages = [];
+            }
+          }
+        } catch (e) {
+          messages = [];
+        }
+      }
+      
+      // Add new message (keep last 100 messages)
+      messages.push({
+        timestamp: new Date().toISOString(),
+        message: req.body,
+        headers: req.headers,
+      });
+      
+      // Keep only last 100 messages
+      if (messages.length > 100) {
+        messages = messages.slice(-100);
+      }
+      
+      fs.writeFileSync(messageLogFile, JSON.stringify(messages, null, 2) + '\n', 'utf8');
+    } catch (logError) {
+      logger.error('Failed to save message to log file', { error: logError.message });
+    }
 
     // Filter out messages from self (if isFromSelf is true)
     // Also filter out outgoing messages (only process incoming)
@@ -225,21 +273,61 @@ async function forwardMessageToWhatsAppGroup(message) {
     }
 
     // Extract image information from WeChat message
+    // Wechaty can send images in various formats:
+    // 1. With type field: { type: 'image', imageUrl: '...', text: 'caption' }
+    // 2. With image field: { image: 'url' } or { image: { url: '...', caption: '...' } }
+    // 3. With base64: { type: 'image', imageBase64: 'data:image/...' }
+    // 4. With media/attachment fields
     let imageUrl = null;
+    let imageBase64 = null;
     let imageCaption = null;
     
-    // Check for image in various formats
+    // Check for image type first
     if (message.type === 'image' || message.messageType === 'image' || message.mediaType === 'image') {
+      // Image message - extract URL or base64
       imageUrl = message.imageUrl || message.image || message.media || message.attachment || 
                  message.fileUrl || message.url;
+      imageBase64 = message.imageBase64 || message.base64;
       imageCaption = message.caption || message.text || message.message || message.content;
     } else if (message.image || message.media || message.attachment) {
+      // Image data in various formats
       const imageData = message.image || message.media || message.attachment;
       if (typeof imageData === 'string') {
-        imageUrl = imageData;
+        // String could be URL or base64
+        if (imageData.startsWith('data:image/') || imageData.startsWith('data:')) {
+          imageBase64 = imageData;
+        } else {
+          imageUrl = imageData;
+        }
       } else if (typeof imageData === 'object' && imageData !== null) {
         imageUrl = imageData.url || imageData.link || imageData.src || imageData.id;
+        imageBase64 = imageData.base64 || imageData.data;
         imageCaption = imageData.caption || message.text || message.message || message.content;
+      }
+    }
+    
+    // Log image detection for debugging
+    if (imageUrl || imageBase64) {
+      logger.info('🖼️ Image detected in WeChat webhook', {
+        hasImageUrl: !!imageUrl,
+        hasImageBase64: !!imageBase64,
+        imageUrl: imageUrl ? (imageUrl.length > 100 ? imageUrl.substring(0, 100) + '...' : imageUrl) : null,
+        imageBase64: imageBase64 ? (imageBase64.substring(0, 50) + '...') : null,
+        caption: imageCaption,
+        messageType: message.type,
+        messageKeys: Object.keys(message),
+        fullMessage: JSON.stringify(message, null, 2).substring(0, 500), // First 500 chars for debugging
+      });
+    } else {
+      // Log when image is NOT detected but message has text (might be image with only caption)
+      if (message.text || message.message || message.content) {
+        logger.info('📝 Text message detected (no image found)', {
+          hasText: !!(message.text || message.message || message.content),
+          text: message.text || message.message || message.content,
+          messageType: message.type,
+          messageKeys: Object.keys(message),
+          fullMessage: JSON.stringify(message, null, 2).substring(0, 500), // First 500 chars for debugging
+        });
       }
     }
     
@@ -251,7 +339,8 @@ async function forwardMessageToWhatsAppGroup(message) {
       message.content ||        // Fallback
       message.payload ||         // Fallback
       (message.message && message.message.conversation) ||  // Nested format
-      imageUrl                  // Image content
+      imageUrl ||               // Image URL
+      imageBase64               // Image base64
     );
     if (!hasContent) {
       logger.debug('WeChat message has no content to forward', {
@@ -264,7 +353,7 @@ async function forwardMessageToWhatsAppGroup(message) {
     const whatsappAdapter = getWhatsAppAdapter();
     
     // Handle image forwarding
-    if (imageUrl) {
+    if (imageUrl || imageBase64) {
       // Format caption with sender info
       let caption = imageCaption || '';
       const senderName = message.talkerName || message.sender?.name || message.from || 'Unknown';
@@ -276,23 +365,35 @@ async function forwardMessageToWhatsAppGroup(message) {
         caption = `[WeChat → WhatsApp]\n\nFrom: ${senderName}\nGroup: ${groupName}`;
       }
       
-      logger.info('Forwarding WeChat image to WhatsApp group', {
+      // Use imageUrl if available, otherwise use imageBase64
+      const imageData = imageUrl || imageBase64;
+      
+      logger.info('📤 Forwarding WeChat image to WhatsApp group', {
         groupId: salesGroupId,
         sender: senderName,
         groupName: groupName,
-        imageUrl: imageUrl,
+        imageType: imageUrl ? 'url' : 'base64',
+        imageUrl: imageUrl ? (imageUrl.length > 100 ? imageUrl.substring(0, 100) + '...' : imageUrl) : null,
+        hasBase64: !!imageBase64,
+        base64Length: imageBase64 ? imageBase64.length : 0,
+        captionLength: caption.length,
+        fullImageData: imageData ? (imageData.length > 200 ? imageData.substring(0, 200) + '...' : imageData) : null,
       });
 
-      const imageSent = await whatsappAdapter.sendImage(salesGroupId, imageUrl, caption);
+      const imageSent = await whatsappAdapter.sendImage(salesGroupId, imageData, caption);
 
       if (imageSent) {
-        logger.info('Successfully forwarded WeChat image to WhatsApp group', {
+        logger.info('✅ Successfully forwarded WeChat image to WhatsApp group', {
           groupId: salesGroupId,
+          imageType: imageUrl ? 'url' : 'base64',
         });
       } else {
-        logger.error('Failed to forward WeChat image to WhatsApp group', {
+        logger.error('❌ Failed to forward WeChat image to WhatsApp group', {
           groupId: salesGroupId,
-          imageUrl: imageUrl,
+          imageType: imageUrl ? 'url' : 'base64',
+          imageUrl: imageUrl ? (imageUrl.length > 100 ? imageUrl.substring(0, 100) + '...' : imageUrl) : null,
+          hasBase64: !!imageBase64,
+          error: 'WhatsApp adapter returned false',
         });
       }
     } else {
